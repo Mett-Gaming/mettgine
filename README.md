@@ -43,6 +43,8 @@ mettgine::crash::init("meinspiel", "MEIN SPIEL", VERSION);
 
 ## Arbeiten ohne Pull-Requests
 
+Die verbindlichen Regeln für KI-Agenten (und alle anderen) stehen in [`AGENTS.md`](AGENTS.md).
+
 Gearbeitet wird direkt auf `main`, mit Commits, Merges und Pushes. Das geht auch aus einem Spiel heraus, in dem die Engine als Submodule liegt.
 
 **Spiel klonen oder aktualisieren** (die Engine landet dabei auf ihrem `main`-Zweig, nicht auf einem losen Commit):
