@@ -49,9 +49,12 @@ Gearbeitet wird direkt auf `main`, mit Commits, Merges und Pushes. Das geht auch
 
 ```powershell
 git clone --recursive https://github.com/Mett-Gaming/<spiel>.git
+git submodule foreach "git checkout main"   # einmal nach dem Klonen
 git pull
 git submodule update --init --remote --merge
 ```
+
+Nach dem Klonen steht die Engine zunächst auf einem losen Commit; `git checkout main` im Submodule (einmalig) setzt sie auf den Zweig. Danach führt `update --remote --merge` neue Engine-Stände per Merge in diesen Zweig.
 
 **Die Engine aus dem Spiel heraus ändern:**
 
