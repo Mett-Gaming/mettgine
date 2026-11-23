@@ -20,7 +20,7 @@ pub fn full_range(aspect: vk::ImageAspectFlags) -> vk::ImageSubresourceRange {
     vk::ImageSubresourceRange {
         aspect_mask: aspect,
         base_mip_level: 0,
-        level_count: 1,
+        level_count: vk::REMAINING_MIP_LEVELS,
         base_array_layer: 0,
         layer_count: 1,
     }
@@ -101,6 +101,22 @@ impl Buffer {
         out
     }
 
+    /// Vergroessert den Puffer auf mindestens `bytes` (Inhalt geht verloren); `true` = neu
+    /// angelegt, Descriptor-Sets muessen neu geschrieben werden. Die GPU darf ihn nicht benutzen.
+    pub fn ensure(
+        &mut self,
+        ctx: &Context,
+        bytes: u64,
+        usage: vk::BufferUsageFlags,
+    ) -> Result<bool> {
+        if bytes <= self.size {
+            return Ok(false);
+        }
+        let new = Self::new_host(ctx, bytes.next_power_of_two(), usage)?;
+        std::mem::replace(self, new).destroy(&ctx.device);
+        Ok(true)
+    }
+
     pub fn destroy(&self, device: &ash::Device) {
         unsafe {
             device.unmap_memory(self.memory);
@@ -116,7 +132,22 @@ pub struct Image {
     pub view: vk::ImageView,
 }
 
+/// Beschreibung eines Bildes.
+#[derive(Clone, Copy)]
+pub struct ImageDesc {
+    pub width: u32,
+    pub height: u32,
+    pub format: vk::Format,
+    pub usage: vk::ImageUsageFlags,
+    pub aspect: vk::ImageAspectFlags,
+    /// Abtastungen pro Bildpunkt
+    pub samples: vk::SampleCountFlags,
+    /// Verkleinerungsstufen
+    pub mips: u32,
+}
+
 impl Image {
+    /// Einfaches Bild: eine Abtastung, keine Verkleinerungsstufen.
     pub fn new(
         ctx: &Context,
         width: u32,
@@ -125,6 +156,31 @@ impl Image {
         usage: vk::ImageUsageFlags,
         aspect: vk::ImageAspectFlags,
     ) -> Result<Self> {
+        Self::with(
+            ctx,
+            &ImageDesc {
+                width,
+                height,
+                format,
+                usage,
+                aspect,
+                samples: vk::SampleCountFlags::TYPE_1,
+                mips: 1,
+            },
+        )
+    }
+
+    pub fn with(ctx: &Context, desc: &ImageDesc) -> Result<Self> {
+        let ImageDesc {
+            width,
+            height,
+            format,
+            usage,
+            aspect,
+            samples,
+            mips,
+        } = *desc;
+        // SAFETY: `ctx` ist ein gueltiges Geraet; das Bild wird in `destroy` freigegeben.
         unsafe {
             let d = &ctx.device;
             let image = d.create_image(
@@ -136,9 +192,9 @@ impl Image {
                         height,
                         depth: 1,
                     })
-                    .mip_levels(1)
+                    .mip_levels(mips)
                     .array_layers(1)
-                    .samples(vk::SampleCountFlags::TYPE_1)
+                    .samples(samples)
                     .tiling(vk::ImageTiling::OPTIMAL)
                     .usage(usage)
                     .initial_layout(vk::ImageLayout::UNDEFINED),

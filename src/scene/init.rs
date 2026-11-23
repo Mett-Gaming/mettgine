@@ -1,11 +1,11 @@
 //! Aufbau des Szenen-Renderers: Bilder, Sampler, Descriptor-Sets, Befehlspuffer, Puffer.
 
-use super::descriptors::create_descriptors;
+use super::descriptors::{create_descriptors, FONT_MIPS};
 use super::pipelines::create_pipelines;
 use super::*;
 use crate::gpu::{MeshData, SkinData};
-use crate::render::transfer::{one_shot, upload_r8};
-use crate::render::util::image_barrier;
+use crate::render::transfer::{halve_r8, one_shot, upload_r8_mips};
+use crate::render::util::{image_barrier, ImageDesc};
 use std::mem::size_of;
 use winit::window::Window;
 
@@ -25,6 +25,27 @@ fn vertex_buffer<T: Pod>(ctx: &Context, items: &[&[T]]) -> Result<(Buffer, Vec<(
     )?;
     buf.write(bytes);
     Ok((buf, ranges))
+}
+
+/// Schrift-Atlas samt Verkleinerungsstufen hochladen.
+unsafe fn upload_font(
+    ctx: &Context,
+    pool: vk::CommandPool,
+    img: &Image,
+    font: (&[u8], u32, u32),
+    mips: u32,
+) -> Result<()> {
+    let mut small: Vec<(Vec<u8>, u32, u32)> = Vec::new();
+    for _ in 1..mips {
+        let next = match small.last() {
+            Some((px, w, h)) => halve_r8(px, *w, *h),
+            None => halve_r8(font.0, font.1, font.2),
+        };
+        small.push(next);
+    }
+    let mut levels = vec![font];
+    levels.extend(small.iter().map(|(px, w, h)| (&px[..], *w, *h)));
+    upload_r8_mips(ctx, pool, img, &levels)
 }
 
 fn per_frame(ctx: &Context, bytes: usize, usage: vk::BufferUsageFlags) -> Result<Vec<Buffer>> {
@@ -51,7 +72,8 @@ impl SceneRenderer {
             Swapchain::new(&ctx, window_size.0, window_size.1, vk::SwapchainKHR::null())?;
         let render_scale = render_scale.clamp(0.25, 2.0);
         let offscreen = offscreen_extent(window_size, render_scale);
-        let (color, depth) = Self::make_targets(&ctx, offscreen)?;
+        let samples = vk::SampleCountFlags::TYPE_1;
+        let (color, depth, ms_color) = Self::make_targets(&ctx, offscreen, samples)?;
         let depth_sampled =
             vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT | vk::ImageUsageFlags::SAMPLED;
         let shadow = Image::new(
@@ -70,13 +92,19 @@ impl SceneRenderer {
             depth_sampled,
             vk::ImageAspectFlags::DEPTH,
         )?;
-        let font_img = Image::new(
+        // klein genug, dass auch die kleinste Stufe noch einen Bildpunkt hat
+        let mips = FONT_MIPS.min(font.1.min(font.2).max(1).ilog2() + 1);
+        let font_img = Image::with(
             &ctx,
-            font.1,
-            font.2,
-            vk::Format::R8_UNORM,
-            vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST,
-            vk::ImageAspectFlags::COLOR,
+            &ImageDesc {
+                width: font.1,
+                height: font.2,
+                format: vk::Format::R8_UNORM,
+                usage: vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST,
+                aspect: vk::ImageAspectFlags::COLOR,
+                samples,
+                mips,
+            },
         )?;
         // SAFETY: alle Handles stammen von diesem Geraet; Aufbau laeuft vor dem ersten Bild.
         unsafe {
@@ -89,7 +117,8 @@ impl SceneRenderer {
                 swapchain.format,
             )?;
             let (command_pool, frames) = present::create_frames(&ctx, FRAMES_IN_FLIGHT)?;
-            upload_r8(&ctx, command_pool, &font_img, font.0, font.1, font.2)?;
+            let timer = GpuTimer::new(&ctx, FRAMES_IN_FLIGHT)?;
+            upload_font(&ctx, command_pool, &font_img, font, mips)?;
             // Platzhalter-Tiefe einmal in einen lesbaren Zustand bringen
             one_shot(&ctx, command_pool, |cmd| {
                 d.cmd_pipeline_barrier(
@@ -126,16 +155,26 @@ impl SceneRenderer {
                 MAX_UI_VERTS * size_of::<UiVertex>(),
                 vk::BufferUsageFlags::VERTEX_BUFFER,
             )?;
+            let particle_bufs = per_frame(
+                &ctx,
+                START_PARTICLES * size_of::<ParticleInst>(),
+                vk::BufferUsageFlags::VERTEX_BUFFER,
+            )?;
             let renderer = Self {
                 swapchain,
                 color,
                 depth,
+                ms_color,
+                samples,
+                wanted_samples: samples,
                 offscreen,
                 render_scale,
                 shadow,
                 dummy_shadow,
                 font: font_img,
                 linear: desc.linear,
+                linear_mips: desc.linear_mips,
+                font_mipmaps: false,
                 shadow_sampler: desc.shadow_sampler,
                 scene_set_layout: desc.scene_set_layout,
                 tex_set_layout: desc.tex_set_layout,
@@ -156,6 +195,17 @@ impl SceneRenderer {
                 bone_bufs,
                 globals_bufs,
                 ui_bufs,
+                particle_bufs,
+                particles: Vec::new(),
+                mesh_bounds: meshes
+                    .iter()
+                    .map(|m| Sphere::of_mesh(&m.vertices))
+                    .collect(),
+                skin_bounds: skins.iter().map(|s| SkinBounds::new(&s.vertices)).collect(),
+                culling: true,
+                lists: DrawLists::default(),
+                timer,
+                stats: FrameStats::default(),
                 scratch_insts: Vec::with_capacity(1024),
                 scratch_bones: Vec::with_capacity(1024),
                 window_size,
@@ -163,29 +213,52 @@ impl SceneRenderer {
                 capture: Capture::default(),
                 ctx,
             };
-            renderer.write_scene_descriptors();
+            for fi in 0..FRAMES_IN_FLIGHT {
+                renderer.write_scene_descriptors(fi);
+            }
             renderer.write_tex_descriptors();
             Ok(renderer)
         }
     }
 
-    pub(super) fn make_targets(ctx: &Context, ext: vk::Extent2D) -> Result<(Image, Image)> {
-        let color = Image::new(
+    /// Zielbilder der Szene: Farbe, Tiefe und (mit Kantenglaettung) mehrfach abgetastete Farbe.
+    pub(super) fn make_targets(
+        ctx: &Context,
+        ext: vk::Extent2D,
+        samples: vk::SampleCountFlags,
+    ) -> Result<(Image, Image, Option<Image>)> {
+        let color_desc = ImageDesc {
+            width: ext.width,
+            height: ext.height,
+            format: COLOR_FORMAT,
+            usage: vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::SAMPLED,
+            aspect: vk::ImageAspectFlags::COLOR,
+            samples: vk::SampleCountFlags::TYPE_1,
+            mips: 1,
+        };
+        let color = Image::with(ctx, &color_desc)?;
+        let depth = Image::with(
             ctx,
-            ext.width,
-            ext.height,
-            COLOR_FORMAT,
-            vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::SAMPLED,
-            vk::ImageAspectFlags::COLOR,
+            &ImageDesc {
+                format: DEPTH_FORMAT,
+                usage: vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
+                aspect: vk::ImageAspectFlags::DEPTH,
+                samples,
+                ..color_desc
+            },
         )?;
-        let depth = Image::new(
-            ctx,
-            ext.width,
-            ext.height,
-            DEPTH_FORMAT,
-            vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
-            vk::ImageAspectFlags::DEPTH,
-        )?;
-        Ok((color, depth))
+        let ms_color = if samples == vk::SampleCountFlags::TYPE_1 {
+            None
+        } else {
+            Some(Image::with(
+                ctx,
+                &ImageDesc {
+                    usage: vk::ImageUsageFlags::COLOR_ATTACHMENT,
+                    samples,
+                    ..color_desc
+                },
+            )?)
+        };
+        Ok((color, depth, ms_color))
     }
 }

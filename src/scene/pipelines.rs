@@ -1,6 +1,6 @@
 //! Pipeline-Layouts und Pipelines des Szenen-Renderers (Himmel, Modelle, Figuren, Schatten,
 //! Nachbearbeitung, UI). Vertex-Layouts: `gpu::MeshVertex` (36 Byte), `gpu::SkinVertex`
-//! (68 Byte), `render::UiVertex` (32 Byte).
+//! (68 Byte), `render::UiVertex` (32 Byte), `particles::ParticleInst` (48 Byte, je Instanz).
 
 use super::*;
 use crate::gpu::{MeshVertex, SkinVertex};
@@ -54,37 +54,21 @@ unsafe fn layout(
     )?)
 }
 
-pub(super) unsafe fn create_pipelines(
-    d: &ash::Device,
-    scene_set: vk::DescriptorSetLayout,
-    tex_set: vk::DescriptorSetLayout,
-    swapchain_format: vk::Format,
-) -> Result<Pipelines> {
-    let scene_layout = layout(d, scene_set, None)?;
-    let post_layout = layout(d, tex_set, Some(vk::ShaderStageFlags::FRAGMENT))?;
-    let ui_layout = layout(d, tex_set, Some(vk::ShaderStageFlags::VERTEX))?;
+const F3: vk::Format = vk::Format::R32G32B32_SFLOAT;
+const F4: vk::Format = vk::Format::R32G32B32A32_SFLOAT;
 
-    let f3 = vk::Format::R32G32B32_SFLOAT;
-    let f4 = vk::Format::R32G32B32A32_SFLOAT;
-    let mesh_bind = vertex_binding(size_of::<MeshVertex>());
-    let mesh_attrs = [attr(0, 0, f3), attr(1, 12, f3), attr(2, 24, f3)];
-    let skin_bind = vertex_binding(size_of::<SkinVertex>());
-    let skin_attrs = [
-        attr(0, 0, f3),
-        attr(1, 12, f3),
-        attr(2, 24, f3),
-        attr(3, 36, f4),
-        attr(4, 52, f4),
-    ];
-    let skin_shadow_attrs = [attr(0, 0, f3), attr(3, 36, f4), attr(4, 52, f4)];
-    let ui_bind = vertex_binding(size_of::<UiVertex>());
-    let ui_attrs = [
-        attr(0, 0, vk::Format::R32G32_SFLOAT),
-        attr(1, 8, vk::Format::R32G32_SFLOAT),
-        attr(2, 16, f4),
-    ];
+fn mesh_attrs() -> [vk::VertexInputAttributeDescription; 3] {
+    [attr(0, 0, F3), attr(1, 12, F3), attr(2, 24, F3)]
+}
 
-    let scene = |vs, fs, bindings, attributes| PipelineDesc {
+/// Farbe und Tiefe der Szene, deckend.
+fn scene_desc<'a>(
+    vs: &'a [u8],
+    fs: &'a [u8],
+    bindings: &'a [vk::VertexInputBindingDescription],
+    attributes: &'a [vk::VertexInputAttributeDescription],
+) -> PipelineDesc<'a> {
+    PipelineDesc {
         vs,
         fs,
         color_format: Some(COLOR_FORMAT),
@@ -96,10 +80,87 @@ pub(super) unsafe fn create_pipelines(
         samples: vk::SampleCountFlags::TYPE_1,
         bindings,
         attributes,
-    };
+    }
+}
+
+/// Pipelines des Szenen-Passes fuer die gegebene Kantenglaettung.
+pub(super) unsafe fn create_scene_pipelines(
+    d: &ash::Device,
+    layout: vk::PipelineLayout,
+    samples: vk::SampleCountFlags,
+) -> Result<ScenePipelines> {
+    let skin_attrs = [
+        attr(0, 0, F3),
+        attr(1, 12, F3),
+        attr(2, 24, F3),
+        attr(3, 36, F4),
+        attr(4, 52, F4),
+    ];
+    let particle_bind = [vk::VertexInputBindingDescription {
+        binding: 0,
+        stride: size_of::<ParticleInst>() as u32,
+        input_rate: vk::VertexInputRate::INSTANCE,
+    }];
+    let particle_attrs = [attr(0, 0, F4), attr(1, 16, F4), attr(2, 32, F4)];
+    let mesh_bind = vertex_binding(size_of::<MeshVertex>());
+    let mesh_attrs = mesh_attrs();
+    let skin_bind = vertex_binding(size_of::<SkinVertex>());
+    let make = |desc: PipelineDesc| create_pipeline(d, layout, &PipelineDesc { samples, ..desc });
+    Ok(ScenePipelines {
+        sky: make(PipelineDesc {
+            depth_test: false,
+            depth_write: false,
+            ..scene_desc(spv!("scene_sky.vert"), spv!("scene_sky.frag"), &[], &[])
+        })?,
+        mesh: make(scene_desc(
+            spv!("scene_mesh.vert"),
+            spv!("scene_mesh.frag"),
+            &mesh_bind,
+            &mesh_attrs,
+        ))?,
+        skin: make(scene_desc(
+            spv!("scene_skin.vert"),
+            spv!("scene_skin.frag"),
+            &skin_bind,
+            &skin_attrs,
+        ))?,
+        particle: make(PipelineDesc {
+            depth_write: false,
+            blend: Blend::Premultiplied,
+            ..scene_desc(
+                spv!("scene_particle.vert"),
+                spv!("scene_particle.frag"),
+                &particle_bind,
+                &particle_attrs,
+            )
+        })?,
+    })
+}
+
+pub(super) unsafe fn create_pipelines(
+    d: &ash::Device,
+    scene_set: vk::DescriptorSetLayout,
+    tex_set: vk::DescriptorSetLayout,
+    swapchain_format: vk::Format,
+) -> Result<Pipelines> {
+    let scene_layout = layout(d, scene_set, None)?;
+    let post_layout = layout(d, tex_set, Some(vk::ShaderStageFlags::FRAGMENT))?;
+    let ui_layout = layout(d, tex_set, Some(vk::ShaderStageFlags::VERTEX))?;
+
+    let mesh_bind = vertex_binding(size_of::<MeshVertex>());
+    let mesh_attrs = mesh_attrs();
+    let skin_bind = vertex_binding(size_of::<SkinVertex>());
+    let skin_shadow_attrs = [attr(0, 0, F3), attr(3, 36, F4), attr(4, 52, F4)];
+    let ui_bind = vertex_binding(size_of::<UiVertex>());
+    let ui_attrs = [
+        attr(0, 0, vk::Format::R32G32_SFLOAT),
+        attr(1, 8, vk::Format::R32G32_SFLOAT),
+        attr(2, 16, F4),
+    ];
+
     let shadow = |vs, fs, bindings, attributes| PipelineDesc {
         color_format: None,
-        ..scene(vs, fs, bindings, attributes)
+        ..scene_desc(vs, fs, bindings, attributes)
     };
     let screen = |vs, fs, blend, bindings, attributes| PipelineDesc {
         vs,
@@ -115,33 +176,8 @@ pub(super) unsafe fn create_pipelines(
         attributes,
     };
 
-    let sky_desc = PipelineDesc {
-        depth_test: false,
-        depth_write: false,
-        ..scene(spv!("scene_sky.vert"), spv!("scene_sky.frag"), &[], &[])
-    };
     Ok(Pipelines {
-        sky: create_pipeline(d, scene_layout, &sky_desc)?,
-        mesh: create_pipeline(
-            d,
-            scene_layout,
-            &scene(
-                spv!("scene_mesh.vert"),
-                spv!("scene_mesh.frag"),
-                &mesh_bind,
-                &mesh_attrs,
-            ),
-        )?,
-        skin: create_pipeline(
-            d,
-            scene_layout,
-            &scene(
-                spv!("scene_skin.vert"),
-                spv!("scene_skin.frag"),
-                &skin_bind,
-                &skin_attrs,
-            ),
-        )?,
+        scene: create_scene_pipelines(d, scene_layout, vk::SampleCountFlags::TYPE_1)?,
         shadow: create_pipeline(
             d,
             scene_layout,

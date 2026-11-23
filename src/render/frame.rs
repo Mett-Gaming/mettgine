@@ -25,6 +25,7 @@ impl Renderer {
                 .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT),
         )?;
 
+        self.timer.begin(d, cmd, fi);
         // --- Pass 0: Ueberwachungskamera -> Monitor-Bild ---
         self.record_monitor(
             cmd,
@@ -37,6 +38,7 @@ impl Renderer {
             monitor_skins,
         );
 
+        self.timer.mark(d, cmd, fi, "Kamera");
         // --- Pass 1: Szene -> Offscreen (480x270) ---
         d.cmd_pipeline_barrier(
             cmd,
@@ -189,6 +191,9 @@ impl Renderer {
             );
             d.cmd_bind_vertex_buffers(cmd, 0, &[self.mesh_vertex_buf.buffer], &[0]);
             for (i, m) in meshes.iter().enumerate() {
+                if !self.visible[i] {
+                    continue;
+                }
                 let (first, count) = self.mesh_ranges[m.mesh];
                 d.cmd_draw(cmd, count, 1, first, i as u32);
             }
@@ -220,6 +225,9 @@ impl Renderer {
             );
             d.cmd_bind_vertex_buffers(cmd, 0, &[self.skin_vertex_buf.buffer], &[0]);
             for (k, s) in list.iter().enumerate() {
+                if !self.visible[(skin_base + offset) as usize + k] {
+                    continue;
+                }
                 let (first, count) = self.skin_ranges[s.skin % self.skin_ranges.len()];
                 d.cmd_draw(cmd, count, 1, first, skin_base + offset + k as u32);
             }
@@ -244,6 +252,9 @@ impl Renderer {
             );
             d.cmd_bind_vertex_buffers(cmd, 0, &[self.mesh_vertex_buf.buffer], &[0]);
             for (j, m) in ghosts.iter().enumerate() {
+                if !self.visible[meshes.len() + j] {
+                    continue;
+                }
                 let (first, count) = self.mesh_ranges[m.mesh];
                 d.cmd_draw(cmd, count, 1, first, (meshes.len() + j) as u32);
             }
@@ -251,9 +262,12 @@ impl Renderer {
 
         d.cmd_end_rendering(cmd);
 
+        self.timer.mark(d, cmd, fi, "Szene");
         self.record_ui_pass(cmd, fi, ui_count, off_extent);
 
+        self.timer.mark(d, cmd, fi, "Menue");
         self.record_post_pass(cmd, image_index, p, capture);
+        self.timer.mark(d, cmd, fi, "Nachbearbeitung");
         d.end_command_buffer(cmd)?;
         Ok(())
     }

@@ -78,9 +78,57 @@ pub(crate) unsafe fn upload_r8(
     width: u32,
     height: u32,
 ) -> Result<()> {
+    upload_r8_mips(ctx, pool, img, &[(pixels, width, height)])
+}
+
+/// Halbiert ein R8-Bild (Mittel aus je 2x2 Bildpunkten).
+pub(crate) fn halve_r8(px: &[u8], w: u32, h: u32) -> (Vec<u8>, u32, u32) {
+    let (nw, nh) = ((w / 2).max(1), (h / 2).max(1));
+    let at = |x: u32, y: u32| px[(y.min(h - 1) * w + x.min(w - 1)) as usize] as u32;
+    let mut out = Vec::with_capacity((nw * nh) as usize);
+    for y in 0..nh {
+        for x in 0..nw {
+            let (x, y) = (x * 2, y * 2);
+            let sum = at(x, y) + at(x + 1, y) + at(x, y + 1) + at(x + 1, y + 1);
+            out.push(((sum + 2) / 4) as u8);
+        }
+    }
+    (out, nw, nh)
+}
+
+/// Wie [`upload_r8`] mit allen Verkleinerungsstufen (Pixel, Breite, Hoehe), groesste zuerst.
+pub(crate) unsafe fn upload_r8_mips(
+    ctx: &Context,
+    pool: vk::CommandPool,
+    img: &Image,
+    levels: &[(&[u8], u32, u32)],
+) -> Result<()> {
     let d = &ctx.device;
-    let staging = Buffer::new_host(ctx, pixels.len() as u64, vk::BufferUsageFlags::TRANSFER_SRC)?;
-    staging.write(pixels);
+    let all = levels.iter().map(|l| l.0).collect::<Vec<_>>().concat();
+    let mut offset = 0u64;
+    let mut copies = Vec::with_capacity(levels.len());
+    for (level, (px, width, height)) in levels.iter().enumerate() {
+        copies.push(vk::BufferImageCopy {
+            buffer_offset: offset,
+            buffer_row_length: 0,
+            buffer_image_height: 0,
+            image_subresource: vk::ImageSubresourceLayers {
+                aspect_mask: vk::ImageAspectFlags::COLOR,
+                mip_level: level as u32,
+                base_array_layer: 0,
+                layer_count: 1,
+            },
+            image_offset: vk::Offset3D::default(),
+            image_extent: vk::Extent3D {
+                width: *width,
+                height: *height,
+                depth: 1,
+            },
+        });
+        offset += px.len() as u64;
+    }
+    let staging = Buffer::new_host(ctx, all.len() as u64, vk::BufferUsageFlags::TRANSFER_SRC)?;
+    staging.write(&all);
     let result = one_shot(ctx, pool, |cmd| {
         d.cmd_pipeline_barrier(
             cmd,
@@ -103,23 +151,7 @@ pub(crate) unsafe fn upload_r8(
             staging.buffer,
             img.image,
             vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-            &[vk::BufferImageCopy {
-                buffer_offset: 0,
-                buffer_row_length: 0,
-                buffer_image_height: 0,
-                image_subresource: vk::ImageSubresourceLayers {
-                    aspect_mask: vk::ImageAspectFlags::COLOR,
-                    mip_level: 0,
-                    base_array_layer: 0,
-                    layer_count: 1,
-                },
-                image_offset: vk::Offset3D::default(),
-                image_extent: vk::Extent3D {
-                    width,
-                    height,
-                    depth: 1,
-                },
-            }],
+            &copies,
         );
         d.cmd_pipeline_barrier(
             cmd,
@@ -163,4 +195,17 @@ pub(crate) unsafe fn set_viewport(d: &ash::Device, cmd: vk::CommandBuffer, exten
             extent,
         }],
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::halve_r8;
+
+    #[test]
+    fn halving_averages_and_keeps_odd_sizes() {
+        let (px, w, h) = halve_r8(&[0, 100, 200, 100, 50, 50, 50, 50], 4, 2);
+        assert_eq!((px, w, h), (vec![50, 100], 2, 1));
+        let (px, w, h) = halve_r8(&[8, 8, 8], 3, 1);
+        assert_eq!((px, w, h), (vec![8], 1, 1));
+    }
 }

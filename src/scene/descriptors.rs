@@ -2,6 +2,9 @@
 
 use super::*;
 
+/// Verkleinerungsstufen der Schrift; der Abstand der Zeichen im Atlas reicht dafuer
+pub(super) const FONT_MIPS: u32 = 3;
+
 fn binding(
     b: u32,
     ty: vk::DescriptorType,
@@ -17,6 +20,7 @@ fn binding(
 /// Sampler, Set-Layouts, Pool und Sets.
 pub(super) struct Descriptors {
     pub linear: vk::Sampler,
+    pub linear_mips: vk::Sampler,
     pub shadow_sampler: vk::Sampler,
     pub scene_set_layout: vk::DescriptorSetLayout,
     pub tex_set_layout: vk::DescriptorSetLayout,
@@ -29,16 +33,21 @@ pub(super) struct Descriptors {
 
 pub(super) unsafe fn create_descriptors(d: &ash::Device) -> Result<Descriptors> {
     let clamp = vk::SamplerAddressMode::CLAMP_TO_EDGE;
-    let linear = d.create_sampler(
-        &vk::SamplerCreateInfo::default()
-            .mag_filter(vk::Filter::LINEAR)
-            .min_filter(vk::Filter::LINEAR)
-            .address_mode_u(clamp)
-            .address_mode_v(clamp)
-            .address_mode_w(clamp)
-            .max_lod(0.0),
-        None,
-    )?;
+    let make_linear = |max_lod: f32| {
+        d.create_sampler(
+            &vk::SamplerCreateInfo::default()
+                .mag_filter(vk::Filter::LINEAR)
+                .min_filter(vk::Filter::LINEAR)
+                .mipmap_mode(vk::SamplerMipmapMode::LINEAR)
+                .address_mode_u(clamp)
+                .address_mode_v(clamp)
+                .address_mode_w(clamp)
+                .max_lod(max_lod),
+            None,
+        )
+    };
+    let linear = make_linear(0.0)?;
+    let linear_mips = make_linear((FONT_MIPS - 1) as f32)?;
     // Vergleichs-Sampler: die Hardware filtert die Schattenkante (PCF)
     let border = vk::SamplerAddressMode::CLAMP_TO_BORDER;
     let shadow_sampler = d.create_sampler(
@@ -103,6 +112,7 @@ pub(super) unsafe fn create_descriptors(d: &ash::Device) -> Result<Descriptors> 
     )?;
     Ok(Descriptors {
         linear,
+        linear_mips,
         shadow_sampler,
         scene_set_layout,
         tex_set_layout,
@@ -115,55 +125,59 @@ pub(super) unsafe fn create_descriptors(d: &ash::Device) -> Result<Descriptors> 
 }
 
 impl SceneRenderer {
-    pub(super) fn write_scene_descriptors(&self) {
-        for fi in 0..FRAMES_IN_FLIGHT {
-            for (set, shadow_view) in [
-                (self.main_sets[fi], self.shadow.view),
-                (self.shadow_sets[fi], self.dummy_shadow.view),
-            ] {
-                let buf = |b: &Buffer| {
-                    [vk::DescriptorBufferInfo::default()
-                        .buffer(b.buffer)
-                        .range(vk::WHOLE_SIZE)]
-                };
-                let (inst, bones, globals) = (
-                    buf(&self.inst_bufs[fi]),
-                    buf(&self.bone_bufs[fi]),
-                    buf(&self.globals_bufs[fi]),
-                );
-                let shadow = [vk::DescriptorImageInfo::default()
-                    .image_view(shadow_view)
-                    .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)];
-                let samp = [vk::DescriptorImageInfo::default().sampler(self.shadow_sampler)];
-                let w = |b: u32, ty| {
-                    vk::WriteDescriptorSet::default()
-                        .dst_set(set)
-                        .dst_binding(b)
-                        .descriptor_type(ty)
-                };
-                let writes = [
-                    w(0, vk::DescriptorType::STORAGE_BUFFER).buffer_info(&inst),
-                    w(1, vk::DescriptorType::STORAGE_BUFFER).buffer_info(&bones),
-                    w(2, vk::DescriptorType::UNIFORM_BUFFER).buffer_info(&globals),
-                    w(3, vk::DescriptorType::SAMPLED_IMAGE).image_info(&shadow),
-                    w(4, vk::DescriptorType::SAMPLER).image_info(&samp),
-                ];
-                // SAFETY: Sets und Ressourcen gehoeren diesem Geraet und sind nicht in Benutzung.
-                unsafe { self.ctx.device.update_descriptor_sets(&writes, &[]) };
-            }
+    /// Sets eines Bildes im Flug schreiben (die GPU benutzt sie gerade nicht).
+    pub(super) fn write_scene_descriptors(&self, fi: usize) {
+        for (set, shadow_view) in [
+            (self.main_sets[fi], self.shadow.view),
+            (self.shadow_sets[fi], self.dummy_shadow.view),
+        ] {
+            let buf = |b: &Buffer| {
+                [vk::DescriptorBufferInfo::default()
+                    .buffer(b.buffer)
+                    .range(vk::WHOLE_SIZE)]
+            };
+            let (inst, bones, globals) = (
+                buf(&self.inst_bufs[fi]),
+                buf(&self.bone_bufs[fi]),
+                buf(&self.globals_bufs[fi]),
+            );
+            let shadow = [vk::DescriptorImageInfo::default()
+                .image_view(shadow_view)
+                .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)];
+            let samp = [vk::DescriptorImageInfo::default().sampler(self.shadow_sampler)];
+            let w = |b: u32, ty| {
+                vk::WriteDescriptorSet::default()
+                    .dst_set(set)
+                    .dst_binding(b)
+                    .descriptor_type(ty)
+            };
+            let writes = [
+                w(0, vk::DescriptorType::STORAGE_BUFFER).buffer_info(&inst),
+                w(1, vk::DescriptorType::STORAGE_BUFFER).buffer_info(&bones),
+                w(2, vk::DescriptorType::UNIFORM_BUFFER).buffer_info(&globals),
+                w(3, vk::DescriptorType::SAMPLED_IMAGE).image_info(&shadow),
+                w(4, vk::DescriptorType::SAMPLER).image_info(&samp),
+            ];
+            // SAFETY: Sets und Ressourcen gehoeren diesem Geraet und sind nicht in Benutzung.
+            unsafe { self.ctx.device.update_descriptor_sets(&writes, &[]) };
         }
     }
 
     /// Post-Pass liest das Offscreen-Bild, UI den Schrift-Atlas (neu nach Groessenwechsel).
     pub(super) fn write_tex_descriptors(&self) {
-        for (set, view) in [
-            (self.post_set, self.color.view),
-            (self.ui_set, self.font.view),
+        let font_sampler = if self.font_mipmaps {
+            self.linear_mips
+        } else {
+            self.linear
+        };
+        for (set, view, sampler) in [
+            (self.post_set, self.color.view, self.linear),
+            (self.ui_set, self.font.view, font_sampler),
         ] {
             let image_info = [vk::DescriptorImageInfo::default()
                 .image_view(view)
                 .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)];
-            let sampler_info = [vk::DescriptorImageInfo::default().sampler(self.linear)];
+            let sampler_info = [vk::DescriptorImageInfo::default().sampler(sampler)];
             let writes = [
                 vk::WriteDescriptorSet::default()
                     .dst_set(set)

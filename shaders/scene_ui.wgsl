@@ -32,8 +32,9 @@ fn vs_main(v: VsIn) -> VsOut {
 
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
+    // ohne Verkleinerungsstufen begrenzt der Sampler auf Stufe 0
     // uv.x < 0: einfarbiges Rechteck
-    let glyph = textureSampleLevel(font_tex, font_samp, max(in.uv, vec2<f32>(0.0)), 0.0).r;
+    let glyph = textureSample(font_tex, font_samp, max(in.uv, vec2<f32>(0.0))).r;
     let a = select(glyph, 1.0, in.uv.x < 0.0);
     return vec4<f32>(in.color.rgb, in.color.a * a);
 }

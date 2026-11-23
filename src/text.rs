@@ -10,7 +10,7 @@ pub const BAKE_PX: f32 = 56.0;
 /// Breite des Atlas in Pixeln (Hoehe ergibt sich, Zweierpotenz)
 const ATLAS_W: u32 = 1024;
 /// Abstand zwischen den Zeichen im Atlas (gegen Ueberlaufen beim Filtern)
-const PAD: u32 = 2;
+const PAD: u32 = 4;
 
 /// Lage und Masse eines Zeichens.
 #[derive(Clone, Copy, Debug, Default)]

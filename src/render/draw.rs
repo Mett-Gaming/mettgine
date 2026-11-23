@@ -3,7 +3,43 @@
 
 use super::*;
 
+/// Wie weit das Zerreissen im Shader (`skin.wgsl`) einen Vertex hoechstens verschiebt (Meter)
+const DISTORT_REACH: f32 = 0.3;
+
 impl Renderer {
+    /// Was im Kamerabild liegt (Monitor und Puffer-Aufbau bleiben davon unberuehrt).
+    fn find_visible(
+        &mut self,
+        p: &FrameParams,
+        meshes: &[&[MeshDraw]],
+        skins: &[&[SkinDraw]],
+        bones: &[Mat4],
+    ) {
+        let view = Frustum::new(&p.view_proj);
+        self.visible.clear();
+        for m in meshes.iter().copied().flatten() {
+            let s = self.mesh_bounds[m.mesh].transformed(&m.model);
+            self.visible.push(view.sees(&s));
+        }
+        let count = self.skin_bounds.len().max(1);
+        for s in skins.iter().copied().flatten() {
+            let sphere = self
+                .skin_bounds
+                .get(s.skin % count)
+                .zip(bones.get(s.first_bone as usize..))
+                .and_then(|(b, pose)| b.posed(&s.model, pose));
+            self.visible.push(sphere.is_none_or(|mut b| {
+                b.radius += s.distort.abs() * DISTORT_REACH;
+                view.sees(&b)
+            }));
+        }
+        let drawn = self.visible.iter().filter(|v| **v).count() as u32;
+        self.stats.drawn = drawn;
+        self.stats.culled = self.visible.len() as u32 - drawn;
+        // dazu Welt und Nachbearbeitung
+        self.stats.draw_calls = drawn + self.static_ranges.len() as u32 + 2;
+    }
+
     fn recreate_swapchain(&mut self) -> Result<()> {
         let (w, h) = self.window_size;
         if w == 0 || h == 0 {
@@ -43,6 +79,8 @@ impl Renderer {
                 return Ok(());
             };
 
+            self.timer.collect(&self.ctx.device, fi, &mut self.stats);
+            let start = std::time::Instant::now();
             // Per-Frame-Daten schreiben (der Fence garantiert, dass die GPU damit fertig ist)
             let mesh_count = meshes.len().min(MAX_MESH_DRAWS);
             let ghost_count = ghosts.len().min(MAX_MESH_DRAWS - mesh_count);
@@ -88,6 +126,14 @@ impl Renderer {
 
             let cap_target = self.capture.prepare(&self.ctx, &self.swapchain)?;
 
+            self.find_visible(
+                p,
+                &[&meshes[..mesh_count], &ghosts[..ghost_count]],
+                &[&solid_skins, &ghost_skins],
+                bones,
+            );
+            let wanted = meshes.len() + ghosts.len() + skins.len() + monitor_skins.len();
+            self.stats.dropped = (wanted - insts.len()) as u32;
             self.record(
                 frame.cmd,
                 fi,
@@ -102,6 +148,7 @@ impl Renderer {
                 cap_target,
             )?;
 
+            self.stats.cpu_ms = start.elapsed().as_secs_f32() * 1000.0;
             if present::submit_and_present(&self.ctx, &self.swapchain, &frame, image_index)? {
                 self.needs_recreate = true;
             }

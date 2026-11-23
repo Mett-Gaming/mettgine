@@ -1,5 +1,6 @@
 //! Aufnahme eines Bildes: Schattenkarte und Szene (der Rest steht in screen.rs).
 
+use super::lists::Visible;
 use super::*;
 use crate::render::transfer::set_viewport;
 use crate::render::util::image_barrier;
@@ -9,8 +10,8 @@ use crate::render::util::image_barrier;
 pub(super) struct Counts {
     /// erste Figuren-Instanz (hinter den Modellen)
     pub skin_base: u32,
-    pub skin_count: usize,
     pub ui_count: u32,
+    pub particles: u32,
 }
 
 fn depth_clear() -> vk::ClearValue {
@@ -37,8 +38,6 @@ impl SceneRenderer {
         fi: usize,
         image_index: usize,
         p: &SceneParams,
-        groups: &[Group],
-        shadow_groups: &[Group],
         skins: &[SkinDraw],
         n: Counts,
         capture: Option<vk::Buffer>,
@@ -50,10 +49,14 @@ impl SceneRenderer {
             &vk::CommandBufferBeginInfo::default()
                 .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT),
         )?;
-        self.record_shadow(cmd, fi, p, shadow_groups, skins, n);
-        self.record_scene(cmd, fi, p, groups, skins, n);
+        self.timer.begin(d, cmd, fi);
+        self.record_shadow(cmd, fi, p, skins, n);
+        self.timer.mark(d, cmd, fi, "Schatten");
+        self.record_scene(cmd, fi, p, skins, n);
+        self.timer.mark(d, cmd, fi, "Szene");
         let sc_image = self.swapchain.images[image_index];
         self.record_screen(cmd, image_index, p, fi, n.ui_count);
+        self.timer.mark(d, cmd, fi, "Nachbearbeitung");
         self.record_present(cmd, sc_image, capture);
         d.end_command_buffer(cmd)?;
         Ok(())
@@ -80,16 +83,34 @@ impl SceneRenderer {
         }
     }
 
-    unsafe fn draw_skins(&self, cmd: vk::CommandBuffer, skins: &[SkinDraw], n: Counts) {
-        if n.skin_count == 0 || self.skin_ranges.is_empty() {
+    unsafe fn draw_skins(
+        &self,
+        cmd: vk::CommandBuffer,
+        skins: &[SkinDraw],
+        n: Counts,
+        shown: impl Fn(&Visible) -> bool,
+    ) {
+        if self.lists.skins.is_empty() || self.skin_ranges.is_empty() {
             return;
         }
         let d = &self.ctx.device;
         d.cmd_bind_vertex_buffers(cmd, 0, &[self.skin_vertex_buf.buffer], &[0]);
-        for (k, s) in skins[..n.skin_count].iter().enumerate() {
-            let (first, count) = self.skin_ranges[s.skin % self.skin_ranges.len()];
-            d.cmd_draw(cmd, count, 1, first, n.skin_base + k as u32);
+        for (k, (s, v)) in skins.iter().zip(&self.lists.skins).enumerate() {
+            if shown(v) {
+                let (first, count) = self.skin_ranges[s.skin % self.skin_ranges.len()];
+                d.cmd_draw(cmd, count, 1, first, n.skin_base + k as u32);
+            }
         }
+    }
+
+    unsafe fn draw_particles(&self, cmd: vk::CommandBuffer, fi: usize, count: u32) {
+        if count == 0 {
+            return;
+        }
+        let d = &self.ctx.device;
+        self.bind_scene(cmd, self.pipes.scene.particle, self.main_sets[fi]);
+        d.cmd_bind_vertex_buffers(cmd, 0, &[self.particle_bufs[fi].buffer], &[0]);
+        d.cmd_draw(cmd, 6, count, 0, 0);
     }
 
     /// Pass 0: Tiefe aus Sicht der Sonne.
@@ -98,7 +119,6 @@ impl SceneRenderer {
         cmd: vk::CommandBuffer,
         fi: usize,
         p: &SceneParams,
-        groups: &[Group],
         skins: &[SkinDraw],
         n: Counts,
     ) {
@@ -141,9 +161,9 @@ impl SceneRenderer {
         if p.shadow_strength > 0.0 {
             set_viewport(d, cmd, extent);
             self.bind_scene(cmd, self.pipes.shadow, self.shadow_sets[fi]);
-            self.draw_groups(cmd, groups);
+            self.draw_groups(cmd, &self.lists.shadow_groups);
             self.bind_scene(cmd, self.pipes.shadow_skin, self.shadow_sets[fi]);
-            self.draw_skins(cmd, skins, n);
+            self.draw_skins(cmd, skins, n, |v| v.shadow);
         }
         d.cmd_end_rendering(cmd);
     }
@@ -154,11 +174,44 @@ impl SceneRenderer {
         cmd: vk::CommandBuffer,
         fi: usize,
         p: &SceneParams,
-        groups: &[Group],
         skins: &[SkinDraw],
         n: Counts,
     ) {
         let d = &self.ctx.device;
+        let color_barrier = |image| {
+            image_barrier(
+                image,
+                vk::ImageAspectFlags::COLOR,
+                vk::ImageLayout::UNDEFINED,
+                vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+                vk::AccessFlags::SHADER_READ | vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
+                vk::AccessFlags::COLOR_ATTACHMENT_READ | vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
+            )
+        };
+        // der letzte Eintrag gilt nur mit Kantenglaettung
+        let ms = self.ms_color.as_ref();
+        let barriers = [
+            image_barrier(
+                self.shadow.image,
+                vk::ImageAspectFlags::DEPTH,
+                vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL,
+                vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
+                vk::AccessFlags::SHADER_READ,
+            ),
+            color_barrier(self.color.image),
+            image_barrier(
+                self.depth.image,
+                vk::ImageAspectFlags::DEPTH,
+                vk::ImageLayout::UNDEFINED,
+                vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL,
+                vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
+                vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_READ
+                    | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
+            ),
+            color_barrier(ms.unwrap_or(&self.color).image),
+        ];
+        let used = if ms.is_some() { 4 } else { 3 };
         d.cmd_pipeline_barrier(
             cmd,
             vk::PipelineStageFlags::LATE_FRAGMENT_TESTS
@@ -170,37 +223,11 @@ impl SceneRenderer {
             vk::DependencyFlags::empty(),
             &[],
             &[],
-            &[
-                image_barrier(
-                    self.shadow.image,
-                    vk::ImageAspectFlags::DEPTH,
-                    vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL,
-                    vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-                    vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
-                    vk::AccessFlags::SHADER_READ,
-                ),
-                image_barrier(
-                    self.color.image,
-                    vk::ImageAspectFlags::COLOR,
-                    vk::ImageLayout::UNDEFINED,
-                    vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
-                    vk::AccessFlags::SHADER_READ,
-                    vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
-                ),
-                image_barrier(
-                    self.depth.image,
-                    vk::ImageAspectFlags::DEPTH,
-                    vk::ImageLayout::UNDEFINED,
-                    vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL,
-                    vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
-                    vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_READ
-                        | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
-                ),
-            ],
+            &barriers[..used],
         );
         let hz = p.horizon;
-        let color_att = vk::RenderingAttachmentInfo::default()
-            .image_view(self.color.view)
+        let mut color_att = vk::RenderingAttachmentInfo::default()
+            .image_view(ms.unwrap_or(&self.color).view)
             .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
             .load_op(vk::AttachmentLoadOp::CLEAR)
             .store_op(vk::AttachmentStoreOp::STORE)
@@ -209,6 +236,13 @@ impl SceneRenderer {
                     float32: [hz.x, hz.y, hz.z, 1.0],
                 },
             });
+        if ms.is_some() {
+            color_att = color_att
+                .store_op(vk::AttachmentStoreOp::DONT_CARE)
+                .resolve_mode(vk::ResolveModeFlags::AVERAGE)
+                .resolve_image_view(self.color.view)
+                .resolve_image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
+        }
         let depth_att = vk::RenderingAttachmentInfo::default()
             .image_view(self.depth.view)
             .image_layout(vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL)
@@ -224,12 +258,13 @@ impl SceneRenderer {
                 .depth_attachment(&depth_att),
         );
         set_viewport(d, cmd, self.offscreen);
-        self.bind_scene(cmd, self.pipes.sky, self.main_sets[fi]);
+        self.bind_scene(cmd, self.pipes.scene.sky, self.main_sets[fi]);
         d.cmd_draw(cmd, 3, 1, 0, 0);
-        self.bind_scene(cmd, self.pipes.mesh, self.main_sets[fi]);
-        self.draw_groups(cmd, groups);
-        self.bind_scene(cmd, self.pipes.skin, self.main_sets[fi]);
-        self.draw_skins(cmd, skins, n);
+        self.bind_scene(cmd, self.pipes.scene.mesh, self.main_sets[fi]);
+        self.draw_groups(cmd, &self.lists.groups);
+        self.bind_scene(cmd, self.pipes.scene.skin, self.main_sets[fi]);
+        self.draw_skins(cmd, skins, n, |v| v.camera);
+        self.draw_particles(cmd, fi, n.particles);
         d.cmd_end_rendering(cmd);
     }
 }

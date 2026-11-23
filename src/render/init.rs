@@ -274,6 +274,7 @@ impl Renderer {
             } = create_pipelines(d, scene_layout, post_layout, ui_layout, swapchain.format)?;
 
             let (command_pool, frames) = present::create_frames(&ctx, FRAMES_IN_FLIGHT)?;
+            let timer = GpuTimer::new(&ctx, FRAMES_IN_FLIGHT)?;
 
             // Font-Atlas hochladen
             upload_r8(&ctx, command_pool, &font_img, font, 128, 128)?;
@@ -379,6 +380,14 @@ impl Renderer {
                 window_size: (size.width, size.height),
                 needs_recreate: false,
                 capture: Capture::default(),
+                timer,
+                stats: FrameStats::default(),
+                mesh_bounds: meshes
+                    .iter()
+                    .map(|m| Sphere::of_mesh(&m.vertices))
+                    .collect(),
+                skin_bounds: skins.iter().map(|s| SkinBounds::new(&s.vertices)).collect(),
+                visible: Vec::new(),
                 ctx,
             };
             renderer.write_scene_descriptors();

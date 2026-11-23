@@ -7,10 +7,13 @@ pub(crate) mod context;
 pub(crate) mod pipeline;
 pub(crate) mod present;
 pub(crate) mod swapchain;
+pub(crate) mod timing;
 pub(crate) mod transfer;
 pub(crate) mod util;
 
+use crate::cull::{Frustum, SkinBounds, Sphere};
 use crate::gpu::{GpuInstance, GpuLight, MeshData};
+use crate::profile::FrameStats;
 use ash::vk;
 use bytemuck::{Pod, Zeroable};
 use context::Context;
@@ -19,6 +22,7 @@ use pipeline::{create_pipeline, Blend, PipelineDesc};
 use present::{Capture, Frame};
 use std::mem::size_of;
 use swapchain::Swapchain;
+use timing::GpuTimer;
 use transfer::{set_viewport, upload_r8};
 use util::{image_barrier, Buffer, Image};
 use winit::window::Window;
@@ -187,6 +191,12 @@ pub struct Renderer {
     window_size: (u32, u32),
     needs_recreate: bool,
     capture: Capture,
+    timer: GpuTimer,
+    stats: FrameStats,
+    mesh_bounds: Vec<Sphere>,
+    skin_bounds: Vec<SkinBounds>,
+    /// im Kamerabild: Modelle, dann Hologramme, dann feste und halbtransparente Figuren
+    visible: Vec<bool>,
     // Muss zuletzt freigegeben werden (Drop-Reihenfolge der Felder).
     ctx: Context,
 }
@@ -214,6 +224,11 @@ impl Renderer {
         self.capture.request(path);
     }
 
+    /// Messwerte des letzten Bildes (Auswertung: `profile::Meter`).
+    pub fn stats(&self) -> FrameStats {
+        self.stats
+    }
+
     pub fn resize(&mut self, width: u32, height: u32) {
         self.window_size = (width, height);
         self.needs_recreate = true;
@@ -236,6 +251,7 @@ impl Drop for Renderer {
                 b.destroy(d);
             }
             self.capture.destroy(d);
+            self.timer.destroy(d);
             for b in self.mesh_inst_bufs.iter().chain(self.ui_bufs.iter()) {
                 b.destroy(d);
             }
