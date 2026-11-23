@@ -17,6 +17,7 @@ Die Engine der Mett-Gaming-Spiele, entstanden aus [KASSE 0](https://github.com/M
 | `input` | Tastatur, Maus, Controller |
 | `audio` | Effekte, Musik, Klang-Bausteine (`synth`), Raumklang (`spatial`) |
 | `net` | Mehrspieler-Verbindungen; `net::sync` für Abgleich, Zwischenbilder und Vorhersage |
+| `presence` | Meldet dem Mett Launcher, was gerade passiert (Discord-Anzeige) |
 | `settings` | Einstellungen lesen und speichern |
 | `crash`, `crash_window` | Protokoll, Absturzberichte (auch bei Treiberabstürzen) und Absturzfenster |
 

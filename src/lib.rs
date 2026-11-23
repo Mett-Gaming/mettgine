@@ -5,6 +5,7 @@
 //!   Die Shader liegen in `shaders/`. Dazu `particles`, `cull`, `splash`.
 //! - `collide`: Kollision und Strahlen. `profile`: Messanzeige.
 //! - `audio`, `input`, `canvas`, `text`, `settings`: Klang, Eingabe, Menues, Einstellungen.
+//! - `presence`: Status fuer den Mett Launcher (Discord-Anzeige).
 //! - `net`: Mehrspieler-Verbindung und Abgleich.
 //! - `anim`: Knochen-Animation (.k0a v2), Ueberblenden, Kopf-Blickziel, Verformungen.
 //! - `gpu`: Datenformate zwischen Spiel und Renderer.
@@ -22,6 +23,7 @@ pub mod gpu;
 pub mod input;
 pub mod net;
 pub mod particles;
+pub mod presence;
 pub mod profile;
 pub mod render;
 pub mod settings;
