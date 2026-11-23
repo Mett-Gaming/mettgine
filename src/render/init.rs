@@ -5,14 +5,14 @@ use super::pipelines::{create_pipelines, Pipelines};
 use super::*;
 
 impl Renderer {
-    /// `font` ist ein 128x128-Graustufen-Atlas (16x16 Zeichen a 8x8 Pixel).
-    /// `signs` = (R8-Pixel, Breite, Hoehe) des Schild-Atlas.
-    pub fn new(
+    /// Wie [`Renderer::new`], aber mit eigenen Welt-Materialien des Spiels.
+    pub fn with_world_shaders(
         window: &Window,
         meshes: &[MeshData],
         skins: &[crate::gpu::SkinData],
         font: &[u8],
         signs: (&[u8], u32, u32),
+        world: &WorldShaders,
     ) -> Result<Self> {
         let size = window.inner_size();
         let ctx = Context::new(window)?;
@@ -271,7 +271,14 @@ impl Renderer {
                 skin_ghost: skin_ghost_pipeline,
                 ui: ui_pipeline,
                 post: post_pipeline,
-            } = create_pipelines(d, scene_layout, post_layout, ui_layout, swapchain.format)?;
+            } = create_pipelines(
+                d,
+                scene_layout,
+                post_layout,
+                ui_layout,
+                swapchain.format,
+                world,
+            )?;
 
             let (command_pool, frames) = present::create_frames(&ctx, FRAMES_IN_FLIGHT)?;
             let timer = GpuTimer::new(&ctx, FRAMES_IN_FLIGHT)?;

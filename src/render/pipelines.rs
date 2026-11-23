@@ -3,6 +3,27 @@
 
 use super::*;
 
+/// Shader der Welt-Boxen als SPIR-V (Einstiege `vs_main` und `fs_main`).
+///
+/// Damit bringt ein Spiel eigene Materialien mit. Schnittstelle: `shaders/_common.wgsl` und
+/// `shaders/_world_base.wgsl` einbinden und `fs_main(in: VsOut)` schreiben; uebersetzt wird im
+/// `build.rs` des Spiels mit naga, wie im `build.rs` der Engine. Die Bindings (Set 0, 0 bis 5)
+/// und Push-Constants muessen gleich bleiben.
+#[derive(Clone, Copy)]
+pub struct WorldShaders<'a> {
+    pub vert: &'a [u8],
+    pub frag: &'a [u8],
+}
+
+impl Default for WorldShaders<'_> {
+    fn default() -> Self {
+        Self {
+            vert: spv!("world.vert"),
+            frag: spv!("world.frag"),
+        }
+    }
+}
+
 /// Die fertigen Pipelines (werden in `Drop for Renderer` freigegeben).
 pub(super) struct Pipelines {
     pub world: vk::Pipeline,
@@ -24,13 +45,14 @@ pub(super) unsafe fn create_pipelines(
     post_layout: vk::PipelineLayout,
     ui_layout: vk::PipelineLayout,
     swapchain_format: vk::Format,
+    world: &WorldShaders,
 ) -> Result<Pipelines> {
     let world_pipeline = create_pipeline(
         d,
         scene_layout,
         &PipelineDesc {
-            vs: spv!("world.vert"),
-            fs: spv!("world.frag"),
+            vs: world.vert,
+            fs: world.frag,
             color_format: Some(COLOR_FORMAT),
             depth_format: Some(DEPTH_FORMAT),
             depth_test: true,

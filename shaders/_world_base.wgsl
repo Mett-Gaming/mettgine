@@ -1,0 +1,85 @@
+// Grundlage jedes Welt-Shaders: Boxen, Bindings und Vertex-Stufe. Vorher `_common.wgsl` einbinden,
+// danach folgt die eigene `fs_main(in: VsOut)` des Spiels (siehe render::WorldShaders).
+
+struct Instance {
+    center: vec4<f32>,
+    half_ext: vec4<f32>,
+    color: vec4<f32>,
+    // x = Material (0 normal, 1 Boden, 2 Decke, 3 leuchtend), y = Seed,
+    // z = Leuchtstaerke, w = Flackern
+    extra: vec4<f32>,
+};
+
+@group(0) @binding(0) var<storage, read> instances: array<Instance>;
+// Schild-Atlas: je Zeile (32 px hoch, 512 px breit) ein Schriftzug
+@group(0) @binding(2) var sign_tex: texture_2d<f32>;
+@group(0) @binding(3) var sign_samp: sampler;
+// Bild der Ueberwachungskamera (Monitor-Material 6)
+@group(0) @binding(5) var monitor_tex: texture_2d<f32>;
+
+struct VsOut {
+    @builtin(position) clip: vec4<f32>,
+    @location(0) world_pos: vec3<f32>,
+    @location(1) normal: vec3<f32>,
+    @location(2) color: vec4<f32>,
+    @location(3) extra: vec4<f32>,
+    @location(4) center: vec3<f32>,
+    @location(5) half_ext: vec3<f32>,
+    @location(6) yaw: f32,
+};
+
+@vertex
+fn vs_main(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VsOut {
+    var normals = array<vec3<f32>, 6>(
+        vec3<f32>(1.0, 0.0, 0.0), vec3<f32>(-1.0, 0.0, 0.0),
+        vec3<f32>(0.0, 1.0, 0.0), vec3<f32>(0.0, -1.0, 0.0),
+        vec3<f32>(0.0, 0.0, 1.0), vec3<f32>(0.0, 0.0, -1.0),
+    );
+    var us = array<vec3<f32>, 6>(
+        vec3<f32>(0.0, 0.0, 1.0), vec3<f32>(0.0, 0.0, 1.0),
+        vec3<f32>(1.0, 0.0, 0.0), vec3<f32>(1.0, 0.0, 0.0),
+        vec3<f32>(1.0, 0.0, 0.0), vec3<f32>(1.0, 0.0, 0.0),
+    );
+    var vs = array<vec3<f32>, 6>(
+        vec3<f32>(0.0, 1.0, 0.0), vec3<f32>(0.0, 1.0, 0.0),
+        vec3<f32>(0.0, 0.0, 1.0), vec3<f32>(0.0, 0.0, 1.0),
+        vec3<f32>(0.0, 1.0, 0.0), vec3<f32>(0.0, 1.0, 0.0),
+    );
+    var qa = array<f32, 6>(-1.0, 1.0, 1.0, -1.0, 1.0, -1.0);
+    var qb = array<f32, 6>(-1.0, -1.0, 1.0, -1.0, 1.0, 1.0);
+
+    let face = vi / 6u;
+    let corner = vi % 6u;
+    let n = normals[face];
+    let local = n + us[face] * qa[corner] + vs[face] * qb[corner];
+    let inst = instances[ii];
+    // center.w = Drehung um die Hochachse (fuer gebogene Regale)
+    let yaw = inst.center.w;
+    let c = cos(yaw);
+    let s = sin(yaw);
+    let lp = local * inst.half_ext.xyz;
+    let rotated = vec3<f32>(lp.x * c + lp.z * s, lp.y, -lp.x * s + lp.z * c);
+    var wp = inst.center.xyz + rotated;
+    // Live-Verbiegen: Boden hebt und senkt sich, Regale/Ware/Schilder schwanken zusaetzlich seitlich.
+    // Decke und grosse Teile (Waende) bleiben fest; was hoch haengt, geht nicht durch die Decke.
+    let material = inst.extra.x;
+    let sw = sway(wp);
+    let lift = sw.y * (1.0 - smoothstep(2.6, 3.4, wp.y));
+    if ((material > 0.5 && material < 1.5) || inst.extra.y < -0.5) {
+        // Boden und alles, was flach darauf liegt (Lochraender, Truemmer)
+        wp.y = wp.y + sw.y;
+    } else if (!(material > 1.5 && material < 2.5) && max(inst.half_ext.x, inst.half_ext.z) < 3.0) {
+        wp = wp + vec3<f32>(sw.x, lift, 0.0);
+    }
+
+    var out: VsOut;
+    out.clip = pc.view_proj * vec4<f32>(wp, 1.0);
+    out.world_pos = wp;
+    out.normal = vec3<f32>(n.x * c + n.z * s, n.y, -n.x * s + n.z * c);
+    out.color = inst.color;
+    out.extra = inst.extra;
+    out.center = inst.center.xyz;
+    out.half_ext = inst.half_ext.xyz;
+    out.yaw = yaw;
+    return out;
+}

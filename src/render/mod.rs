@@ -57,6 +57,8 @@ mod pipelines;
 mod post_pass;
 mod upload;
 
+pub use pipelines::WorldShaders;
+
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct WorldPush {
@@ -214,6 +216,19 @@ fn binding(
 }
 
 impl Renderer {
+    /// `font` ist ein 128x128-Graustufen-Atlas (16x16 Zeichen a 8x8 Pixel).
+    /// `signs` = (R8-Pixel, Breite, Hoehe) des Schild-Atlas.
+    pub fn new(
+        window: &Window,
+        meshes: &[MeshData],
+        skins: &[crate::gpu::SkinData],
+        font: &[u8],
+        signs: (&[u8], u32, u32),
+    ) -> Result<Self> {
+        let world = WorldShaders::default();
+        Self::with_world_shaders(window, meshes, skins, font, signs, &world)
+    }
+
     /// Name der Grafikkarte samt Treiber.
     pub fn gpu_name(&self) -> &str {
         &self.ctx.gpu_name

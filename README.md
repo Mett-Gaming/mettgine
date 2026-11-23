@@ -5,12 +5,22 @@ Die Engine der Mett-Gaming-Spiele, entstanden aus [KASSE 0](https://github.com/M
 | Modul | Inhalt |
 |---|---|
 | `render` | Vulkan-Renderer: Welt-Boxen, Modelle (instanziert), animierte Figuren (Skinning), Hologramme, zweite Kamera (Überwachungsmonitor), UI-Ebene, VHS-Nachbearbeitung, Screenshots |
+| `scene` | Szenen-Renderer für draußen: Sonne mit Schattenkarte, Nebel, Instanzen, Figuren, Partikel, UI. Sortiert Unsichtbares aus, Puffer wachsen mit |
+| `particles` | Partikel-Rechnung (Staub, Rauch, Funken), gezeichnet von `scene` |
+| `cull` | Sichtfeld und Hüllkugeln |
+| `collide` | Kollision ohne Physik-Bibliothek: Kisten, Kapseln, Strahlen, Sichtlinien, Stufen |
+| `profile` | Messanzeige: Prozessor- und Grafikzeiten, Ruckler, Zeichenbefehle |
 | `anim` | Knochen-Animation (`.k0a` v2): Überblenden, Einmal-Clips, Kopf-Blickziel, Zucken, Strecken, Kopfdrehung, Stop-Motion |
 | `gpu` | Datenformate zwischen Spiel und Renderer: Welt-Boxen, Lichter, Modelle, Figuren (`.k0s`) |
 | `ui` | Bitmap-Text und Formen für Menüs und HUD |
+| `canvas`, `text` | Zeichenfläche für Menüs mit Schrift aus TTF/OTF |
+| `input` | Tastatur, Maus, Controller |
+| `audio` | Effekte, Musik, Klang-Bausteine (`synth`), Raumklang (`spatial`) |
+| `net` | Mehrspieler-Verbindungen; `net::sync` für Abgleich, Zwischenbilder und Vorhersage |
+| `settings` | Einstellungen lesen und speichern |
 | `crash`, `crash_window` | Protokoll, Absturzberichte (auch bei Treiberabstürzen) und Absturzfenster |
 
-Die Shader liegen in `shaders/` und werden beim Bauen mit naga zu SPIR-V übersetzt, ein Vulkan SDK braucht man nicht. Die Welt-Materialien (Poster, Schilder, Monitor) stammen noch aus KASSE 0.
+Die Shader liegen in `shaders/` und werden beim Bauen mit naga zu SPIR-V übersetzt, ein Vulkan SDK braucht man nicht. Die vorgegebenen Welt-Materialien (Poster, Schilder, Monitor) stammen aus KASSE 0 und liegen in `_world_kasse0.wgsl`; eigene bringt ein Spiel mit `Renderer::with_world_shaders` mit.
 
 ## In einem Spiel benutzen
 
@@ -39,6 +49,30 @@ if let Some(c) = mettgine::crash_window::parse_args(&args) {
     return Ok(());
 }
 mettgine::crash::init("meinspiel", "MEIN SPIEL", VERSION);
+```
+
+### Zuschaltbares
+
+Alles Sichtbare ist aus, bis das Spiel es einschaltet:
+
+```rust
+renderer.set_msaa(4);              // Kantenglättung (1, 2, 4, 8)
+renderer.set_font_mipmaps(true);   // kleine Schrift ruhiger
+renderer.queue_particles(particles.instances(cam_pos)); // vor jedem draw
+
+// Messanzeige
+meter.push(dt, &renderer.stats());
+mettgine::profile::draw_overlay(&mut canvas, 8.0, 8.0, 14.0, &meter.lines());
+
+// Raumklang
+audio.set_listener(Listener { pos, forward, ..Default::default() });
+audio.play_at(&sound, Emitter::at(wo));
+```
+
+Ob der Szenen-Renderer auf der eigenen Grafikkarte richtig zeichnet, prüft ohne Spieldaten und ohne sichtbares Fenster:
+
+```powershell
+cargo run --release --example gpu_check
 ```
 
 ## Arbeiten ohne Pull-Requests

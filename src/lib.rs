@@ -3,6 +3,10 @@
 //! - `render`: Vulkan-Renderer (Welt-Boxen, Modelle, animierte Figuren, Hologramme,
 //!   Ueberwachungskamera, UI-Ebene, VHS-Nachbearbeitung). Die Shader liegen in `shaders/`;
 //!   die Welt-Materialien (Poster, Schilder, Monitor) stammen noch aus KASSE 0.
+//! - `scene`, `particles`, `cull`: Szenen-Renderer fuer draussen, Partikel, Sichtfeld.
+//! - `collide`: Kollision und Strahlen. `profile`: Messanzeige.
+//! - `audio`, `input`, `canvas`, `text`, `settings`: Klang, Eingabe, Menues, Einstellungen.
+//! - `net`: Mehrspieler-Verbindung und Abgleich.
 //! - `anim`: Knochen-Animation (.k0a v2), Ueberblenden, Kopf-Blickziel, Verformungen.
 //! - `gpu`: Datenformate zwischen Spiel und Renderer.
 //! - `ui`: Text und einfache Formen fuer Menues und HUD.
