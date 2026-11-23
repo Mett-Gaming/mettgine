@@ -153,7 +153,7 @@ Gearbeitet wird direkt auf `main`, mit Einträgen, Zusammenführungen und Hochla
 
 ## 7. Regeln, die die Engine allen Spielen garantiert
 - **Speicherorte:**
-  - Protokoll, Absturzberichte, Einstellungen, Spielstände nur in `%APPDATA%\<spiel>`
+  - Protokoll, Absturzberichte, Einstellungen, Spielstände nur in `%APPDATA%\.mettlauncher\<spiel>`
   - nie neben die exe: der Mett-Launcher ersetzt den Installordner bei jeder Aktualisierung
 - **Prozess:**
   - Die Spiel-exe läuft selbst, bis das Spiel endet.
