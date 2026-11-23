@@ -3,10 +3,10 @@
 //! Pass 1 (480x270 Offscreen): statische Welt-Boxen, Meshes (Modelle + dynamische Boxen), UI.
 //! Pass 2 (Swapchain): VHS-Post-Pass. Dynamic Rendering (Vulkan 1.3).
 
-mod context;
+pub(crate) mod context;
 mod pipeline;
-mod swapchain;
-mod util;
+pub(crate) mod swapchain;
+pub(crate) mod util;
 
 use crate::gpu::{GpuInstance, GpuLight, MeshData};
 use ash::vk;

@@ -12,6 +12,14 @@ winit = "0.30"
 glam = { version = "0.29", features = ["bytemuck"] }
 bytemuck = { version = "1", features = ["derive"] }
 font8x8 = "0.3"
+# Schrift-Atlas aus TTF (text)
+ab_glyph = "0.2"
+# Controller (input)
+gilrs = "0.11"
+# Audio-Wiedergabe (audio)
+rodio = { version = "0.19", default-features = false }
+# Mehrspieler ueber den Mett Launcher (net::mett)
+mett-net = { git = "https://github.com/Mett-Gaming/mett-launcher", tag = "v0.2.1" }
 
 [build-dependencies]
 naga = { version = "24", features = ["wgsl-in", "spv-out"] }

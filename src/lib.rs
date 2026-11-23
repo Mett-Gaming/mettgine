@@ -9,8 +9,15 @@
 //! - `crash`, `crash_window`: Protokoll, Absturzberichte und Absturzfenster.
 
 pub mod anim;
+pub mod audio;
+pub mod canvas;
 pub mod crash;
 pub mod crash_window;
 pub mod gpu;
+pub mod input;
+pub mod net;
 pub mod render;
+pub mod scene;
+pub mod settings;
+pub mod text;
 pub mod ui;
