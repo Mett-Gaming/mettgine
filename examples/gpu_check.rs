@@ -122,10 +122,7 @@ impl Check {
         }
         let bmp = std::fs::read(&self.path).map_err(|e| format!("kein Bild: {e}"))?;
         let _ = std::fs::remove_file(&self.path);
-        Ok(bmp[54..]
-            .chunks_exact(4)
-            .map(|p| [p[0], p[1], p[2]])
-            .collect())
+        Ok(bmp[54..].chunks(4).map(|p| [p[0], p[1], p[2]]).collect())
     }
 
     fn run(&mut self) -> Result<(), String> {

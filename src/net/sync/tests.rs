@@ -126,7 +126,7 @@ fn prediction_follows_the_host_despite_lost_messages() {
     let mut inputs = InputQueue::new();
     let mut w = Writer::new();
     for n in 0..400u32 {
-        let lost = |salt: u32| (n * 31 + salt) % 5 == 0; // jede fuenfte geht verloren
+        let lost = |salt: u32| (n * 31 + salt) % 5 < 1; // jede fuenfte geht verloren
         let dir = if n < 300 { 1.0 } else { 0.0 };
         me.apply(dir, step);
         w.clear();

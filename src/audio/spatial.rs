@@ -19,7 +19,7 @@ const OPEN_HZ: f32 = 18_000.0;
 const MUFFLED_HZ: f32 = 700.0;
 /// Glaettung der Werte (s)
 const SMOOTH: f32 = 0.02;
-/// Samples zwischen zwei Blicken auf die Zielwerte
+/// Samples zwischen zwei Blicken auf die Zielwerte (Zweierpotenz)
 const REFRESH: u32 = 64;
 
 /// Wo und wie das Spiel hoert.
@@ -260,7 +260,7 @@ impl Iterator for SpatialSource {
         if let Some(r) = self.pending.take() {
             return Some(r);
         }
-        if self.tick % REFRESH == 0 {
+        if self.tick & (REFRESH - 1) == 0 {
             self.refresh();
         }
         self.tick = self.tick.wrapping_add(1);
