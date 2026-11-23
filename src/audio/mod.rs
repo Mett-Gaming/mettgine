@@ -4,7 +4,14 @@
 //!   Ohne Ausgabegeraet bleibt alles still (kein Fehler).
 //! - [`Sound`]: Mono-Samples bei [`RATE`]; [`synth`] baut Toene, Rauschen und Huellkurven.
 //!
+//! - [`spatial`]: Klaenge mit Ort in der Welt ([`Audio::play_at`], [`Audio::start_loop`]).
+//!
 //! Welche Klaenge es gibt, legt das Spiel fest.
+
+pub mod spatial;
+pub mod synth;
+
+use spatial::{spatialize, Control, Emitter, Listener, SpatialSource};
 
 use rodio::buffer::SamplesBuffer;
 use rodio::{OutputStream, OutputStreamHandle, Sink, Source};
@@ -14,6 +21,9 @@ use std::sync::Arc;
 pub const RATE: u32 = 44_100;
 /// So viele Effekte duerfen gleichzeitig klingen (aelteste werden ersetzt)
 const VOICES: usize = 16;
+
+/// So viele Klaenge mit Ort duerfen gleichzeitig klingen
+const SPATIAL_VOICES: usize = 32;
 
 /// Ein fertiger Klang (Mono, -1..1).
 #[derive(Clone, Debug, Default)]
@@ -29,6 +39,20 @@ impl Sound {
     }
 }
 
+/// Kennung eines laufenden Klangs mit Ort.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct VoiceId(u64);
+
+/// Ein laufender Klang mit Ort.
+struct SpatialVoice {
+    id: VoiceId,
+    ctl: Arc<Control>,
+    emitter: Emitter,
+    looping: bool,
+    // haelt die Wiedergabe am Leben
+    _sink: Sink,
+}
+
 /// Ausgabe mit Effekt-Stimmen und einer Musik-Spur.
 pub struct Audio {
     // Der Stream muss leben, solange etwas klingt.
@@ -37,6 +61,9 @@ pub struct Audio {
     voices: Vec<Sink>,
     next_voice: usize,
     music: Option<Sink>,
+    spatial: Vec<SpatialVoice>,
+    listener: Listener,
+    next_id: u64,
     /// Gesamtlautstaerke 0..1
     pub volume: f32,
     /// Musiklautstaerke 0..1 (zusaetzlich zur Gesamtlautstaerke)
@@ -63,6 +90,9 @@ impl Audio {
             voices,
             next_voice: 0,
             music: None,
+            spatial: Vec::new(),
+            listener: Listener::default(),
+            next_id: 0,
             volume,
             music_volume,
         }
@@ -86,6 +116,84 @@ impl Audio {
         sink.set_volume(gain * self.volume);
         sink.append(SamplesBuffer::new(1, rate, sound.0.as_ref().clone()));
         sink.play();
+    }
+
+    /// Ort und Blickrichtung des Hoerers; einmal pro Bild. Fuehrt alle Klaenge mit Ort nach und
+    /// raeumt beendete auf.
+    pub fn set_listener(&mut self, l: Listener) {
+        self.listener = l;
+        self.spatial.retain(|v| !v.ctl.done());
+        for v in &self.spatial {
+            v.ctl.set(&self.mix(&v.emitter));
+        }
+    }
+
+    fn mix(&self, e: &Emitter) -> spatial::Mix {
+        let mut m = spatialize(&self.listener, e);
+        m.left *= self.volume;
+        m.right *= self.volume;
+        m
+    }
+
+    fn start(&mut self, sound: &Sound, e: Emitter, looping: bool) -> Option<VoiceId> {
+        if sound.0.is_empty() {
+            return None;
+        }
+        let h = self.handle.as_ref()?;
+        self.spatial.retain(|v| !v.ctl.done());
+        if self.spatial.len() >= SPATIAL_VOICES {
+            // aelteste einmalige Stimme weicht; laufen nur Schleifen, bleibt der neue Klang aus
+            let i = self.spatial.iter().position(|v| !v.looping)?;
+            self.spatial.remove(i);
+        }
+        let sink = Sink::try_new(h).ok()?;
+        let ctl = Control::new(&self.mix(&e));
+        sink.append(SpatialSource::new(sound.clone(), ctl.clone(), looping));
+        let id = VoiceId(self.next_id);
+        self.next_id += 1;
+        self.spatial.push(SpatialVoice {
+            id,
+            ctl,
+            emitter: e,
+            looping,
+            _sink: sink,
+        });
+        Some(id)
+    }
+
+    /// Spielt einen Effekt an einem Ort. `None` = kein Geraet oder keine Stimme frei.
+    pub fn play_at(&mut self, sound: &Sound, e: Emitter) -> Option<VoiceId> {
+        // ausser Hoerweite: gar nicht erst starten
+        let m = spatialize(&self.listener, &e);
+        if m.left.max(m.right) <= 0.0 {
+            return None;
+        }
+        self.start(sound, e, false)
+    }
+
+    /// Startet eine Schleife an einem Ort (Motor, Summen); laeuft bis [`Audio::stop_voice`].
+    pub fn start_loop(&mut self, sound: &Sound, e: Emitter) -> Option<VoiceId> {
+        self.start(sound, e, true)
+    }
+
+    /// Quelle bewegen oder veraendern; `false` = klingt nicht mehr.
+    pub fn move_voice(&mut self, id: VoiceId, e: Emitter) -> bool {
+        let mix = self.mix(&e);
+        match self.spatial.iter_mut().find(|v| v.id == id) {
+            Some(v) if !v.ctl.done() => {
+                v.emitter = e;
+                v.ctl.set(&mix);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Klang mit Ort kurz ausblenden und beenden.
+    pub fn stop_voice(&mut self, id: VoiceId) {
+        if let Some(v) = self.spatial.iter().find(|v| v.id == id) {
+            v.ctl.stop();
+        }
     }
 
     /// Startet eine Musik-Schleife (ersetzt die vorherige).
@@ -114,105 +222,8 @@ impl Audio {
         if let Some(m) = &self.music {
             m.set_volume(self.volume * self.music_volume);
         }
-    }
-}
-
-/// Bausteine fuer Klaenge im Code.
-pub mod synth {
-    use super::RATE;
-
-    /// Wellenform eines Tons.
-    #[derive(Clone, Copy, Debug, PartialEq)]
-    pub enum Wave {
-        Sine,
-        Square,
-        Saw,
-        Triangle,
-    }
-
-    fn wave(w: Wave, phase: f32) -> f32 {
-        let p = phase.fract();
-        match w {
-            Wave::Sine => (p * std::f32::consts::TAU).sin(),
-            Wave::Square => {
-                if p < 0.5 {
-                    1.0
-                } else {
-                    -1.0
-                }
-            }
-            Wave::Saw => 2.0 * p - 1.0,
-            Wave::Triangle => 1.0 - 4.0 * (p - 0.5).abs(),
-        }
-    }
-
-    /// Anzahl Samples fuer `secs` Sekunden.
-    pub fn len(secs: f32) -> usize {
-        (secs.max(0.0) * RATE as f32) as usize
-    }
-
-    /// Ton, dessen Frequenz linear von `f0` nach `f1` (Hz) gleitet.
-    pub fn tone(w: Wave, f0: f32, f1: f32, secs: f32) -> Vec<f32> {
-        let n = len(secs);
-        let mut phase = 0.0;
-        (0..n)
-            .map(|i| {
-                let t = i as f32 / n.max(1) as f32;
-                phase += (f0 + (f1 - f0) * t) / RATE as f32;
-                wave(w, phase)
-            })
-            .collect()
-    }
-
-    /// Weisses Rauschen (deterministisch aus `seed`).
-    pub fn noise(secs: f32, seed: u32) -> Vec<f32> {
-        let mut s = seed.wrapping_mul(747_796_405).wrapping_add(2_891_336_453) | 1;
-        (0..len(secs))
-            .map(|_| {
-                s ^= s << 13;
-                s ^= s >> 17;
-                s ^= s << 5;
-                (s as f32 / u32::MAX as f32) * 2.0 - 1.0
-            })
-            .collect()
-    }
-
-    /// Huellkurve: Anstieg `attack` und exponentielles Ausklingen (`decay` = Zeitkonstante, s).
-    pub fn envelope(samples: &mut [f32], attack: f32, decay: f32) {
-        let a = len(attack).max(1) as f32;
-        for (i, s) in samples.iter_mut().enumerate() {
-            let t = i as f32 / RATE as f32;
-            let rise = (i as f32 / a).min(1.0);
-            *s *= rise * (-t / decay.max(1e-4)).exp();
-        }
-    }
-
-    /// Einfacher Tiefpass (Glaettung, `k` = 0..1, kleiner = dumpfer).
-    pub fn lowpass(samples: &mut [f32], k: f32) {
-        let mut y = 0.0;
-        for s in samples.iter_mut() {
-            y += (*s - y) * k.clamp(0.0, 1.0);
-            *s = y;
-        }
-    }
-
-    /// Mischt `src` mit Lautstaerke `gain` ab Sekunde `at` in `dst` (verlaengert bei Bedarf).
-    pub fn mix_into(dst: &mut Vec<f32>, src: &[f32], at: f32, gain: f32) {
-        let start = len(at);
-        if dst.len() < start + src.len() {
-            dst.resize(start + src.len(), 0.0);
-        }
-        for (i, s) in src.iter().enumerate() {
-            dst[start + i] += s * gain;
-        }
-    }
-
-    /// Auf hoechstens `peak` begrenzen (gegen Uebersteuern).
-    pub fn normalize(samples: &mut [f32], peak: f32) {
-        let m = samples.iter().fold(0.0f32, |a, s| a.max(s.abs()));
-        if m > 1e-6 {
-            let k = peak / m;
-            samples.iter_mut().for_each(|s| *s *= k);
+        for v in &self.spatial {
+            v.ctl.set(&self.mix(&v.emitter));
         }
     }
 }
