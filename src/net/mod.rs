@@ -4,6 +4,8 @@
 //! den Host, der Host an einzelne Peers oder mit [`BROADCAST`] an alle. Was in den Nachrichten
 //! steht (Spielzustand, Eingaben), entscheidet das Spiel.
 //!
+//! [`sync`]: Bausteine fuer laufenden Abgleich (Nachrichten packen, Uhr, Zwischenbilder, Vorhersage).
+//!
 //! Verbindungsarten ([`Transport`]):
 //! - [`mett::MettTransport`]: ueber den Mett Launcher (`mett-net`, Peer-to-Peer ohne Server)
 //! - [`udp::UdpTransport`]: lokales UDP zum Testen auf einem PC (mehrere Instanzen)
@@ -11,6 +13,7 @@
 
 pub mod loopback;
 pub mod mett;
+pub mod sync;
 pub mod udp;
 
 /// Peer-Nummer des Hosts (aus Sicht eines Mitspielers)
