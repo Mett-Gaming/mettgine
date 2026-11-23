@@ -1,7 +1,7 @@
 //! Prueft den Szenen-Renderer auf einer echten Grafikkarte, ohne Spieldaten und ohne sichtbares
 //! Fenster: zeichnet kleine Testszenen und vergleicht die Bildpunkte selbst.
 //!
-//! Aufruf: `cargo run --release --example gpu_check` (Ende mit Fehler, wenn etwas nicht stimmt).
+//! Aufruf: `cargo run --release --example gpu_check [ordner]` (Ende mit Fehler, wenn etwas nicht stimmt).
 
 use glam::{Mat4, Vec3, Vec4};
 use mettgine::gpu::{MeshData, MeshVertex, SkinData, SkinVertex};
@@ -105,6 +105,7 @@ impl Shot {
 struct Check {
     renderer: SceneRenderer,
     path: std::path::PathBuf,
+    count: usize,
 }
 
 impl Check {
@@ -129,7 +130,23 @@ impl Check {
     fn shot(&mut self, s: &Shot) -> Result<Vec<[u8; 3]>, String> {
         self.draw(s)?;
         self.draw(s)?;
-        self.one(s)
+        let px = self.one(s)?;
+        self.compare(&px)?;
+        Ok(px)
+    }
+
+    /// Mit Ordner als Aufruf-Argument: Bild ablegen bzw. mit dem abgelegten vergleichen.
+    fn compare(&mut self, px: &[[u8; 3]]) -> Result<(), String> {
+        let Some(dir) = std::env::args_os().nth(1) else {
+            return Ok(());
+        };
+        let file = std::path::Path::new(&dir).join(format!("szene{:02}.raw", self.count));
+        self.count += 1;
+        let new = px.concat();
+        match std::fs::read(&file) {
+            Ok(old) => ensure(old == new, &format!("{} weicht ab", file.display())),
+            Err(_) => std::fs::write(&file, new).map_err(|e| e.to_string()),
+        }
     }
 
     /// Startbild abspielen; prueft ein Bild mittendrin.
@@ -339,7 +356,12 @@ impl App {
         println!("{}", renderer.gpu_name());
         let path =
             std::env::temp_dir().join(format!("mettgine_gpu_check_{}.bmp", std::process::id()));
-        let result = Check { renderer, path }.run();
+        let result = Check {
+            renderer,
+            path,
+            count: 0,
+        }
+        .run();
         drop(window);
         result
     }
