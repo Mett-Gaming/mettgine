@@ -1,18 +1,18 @@
 //! Absturzberichte und laufendes Protokoll.
 //!
 //! - `log(...)`: Zeile mit Zeitstempel ins laufende Protokoll
-//!   (`%APPDATA%\<app>\logs\latest.log`, beim Start geleert) und in einen Ringpuffer.
+//!   (`%APPDATA%\.mettlauncher\<app>\logs\latest.log`, beim Start geleert) und in einen Ringpuffer.
 //!   Im Release-Build gibt es kein Konsolenfenster: Ohne das Protokoll waeren Fehler unsichtbar.
 //! - `context(...)`: Momentaufnahme des Spiels (Bildschirm, Stufe, Seed, GPU ...), die in
 //!   jeden Bericht kommt.
 //! - Absturz (Rust-Panic oder ein Absturz im Grafiktreiber): Bericht nach
-//!   `%APPDATA%\<app>\crashes\crash-<Datum>.txt` mit Version, Fehler, Ort, Aufrufliste,
+//!   `%APPDATA%\.mettlauncher\<app>\crashes\crash-<Datum>.txt` mit Version, Fehler, Ort, Aufrufliste,
 //!   Moduladresse (zum spaeteren Aufloesen), Kontext und den letzten Protokollzeilen. Danach
 //!   ein Hinweisfenster fuer den Spieler. Es bleiben die letzten 10 Berichte.
 //! - `fatal(...)`: geordneter Abbruch mit Bericht und verstaendlicher Meldung (z. B. Vulkan
 //!   fehlt).
 //!
-//! Alles landet in `%APPDATA%`, nie neben der exe (der Launcher ersetzt den Installordner).
+//! Alles landet in `%APPDATA%\.mettlauncher`, nie neben der exe (der Launcher ersetzt den Installordner).
 
 use std::collections::{BTreeMap, VecDeque};
 use std::fs::{self, File};
@@ -44,12 +44,15 @@ fn state() -> Option<&'static Mutex<State>> {
     STATE.get()
 }
 
-/// Ordner fuer Protokoll und Berichte: `%APPDATA%\<app>` (sonst neben dem Arbeitsordner).
+/// Gemeinsamer Ordner aller Spiele in `%APPDATA%`
+const DATA_ROOT: &str = ".mettlauncher";
+
+/// Ordner fuer Einstellungen, Spielstaende, Protokoll und Berichte: `%APPDATA%\.mettlauncher\<app>` (sonst neben dem Arbeitsordner).
 pub fn data_dir(app: &str) -> Option<PathBuf> {
     let base = std::env::var_os("APPDATA")
         .map(PathBuf::from)
         .or_else(|| std::env::current_dir().ok())?;
-    Some(base.join(app))
+    Some(base.join(DATA_ROOT).join(app))
 }
 
 /// Einrichten (einmal beim Start). `app` = Ordnername, `title` = Name fuer Meldungen.

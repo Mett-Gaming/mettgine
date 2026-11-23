@@ -51,6 +51,8 @@ if let Some(c) = mettgine::crash_window::parse_args(&args) {
 mettgine::crash::init("meinspiel", "MEIN SPIEL", VERSION);
 ```
 
+Einstellungen, Spielstände, Protokoll und Absturzberichte liegen in `%APPDATA%\.mettlauncher\<spiel>` (`crash::data_dir`).
+
 ### Zuschaltbares
 
 Alles Sichtbare ist aus, bis das Spiel es einschaltet:

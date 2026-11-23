@@ -1,4 +1,4 @@
-//! Einstellungsdatei als `schluessel=wert`-Zeilen in `%APPDATA%\<spiel>\<datei>`.
+//! Einstellungsdatei als `schluessel=wert`-Zeilen in `%APPDATA%\.mettlauncher\<spiel>\<datei>`.
 //!
 //! Welche Einstellungen es gibt, legt das Spiel fest; hier liegen nur Lesen, Schreiben und
 //! Werte holen mit Grenzen. Nie neben die exe (der Launcher ersetzt den Installordner).
@@ -89,6 +89,12 @@ pub fn save(app: &str, file: &str, kv: &KeyValues) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn files_live_in_the_shared_launcher_folder() {
+        let p = path("spiel", "settings.txt").unwrap();
+        assert!(p.ends_with(".mettlauncher/spiel/settings.txt"), "{p:?}");
+    }
 
     #[test]
     fn values_roundtrip_and_are_clamped() {
