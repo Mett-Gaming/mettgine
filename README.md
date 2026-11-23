@@ -4,9 +4,8 @@ Die Engine der Mett-Gaming-Spiele, entstanden aus [KASSE 0](https://github.com/M
 
 | Modul | Inhalt |
 |---|---|
-| `render` | Vulkan-Renderer: Welt-Boxen, Modelle (instanziert), animierte Figuren (Skinning), Hologramme, zweite Kamera (Überwachungsmonitor), UI-Ebene, VHS-Nachbearbeitung, Screenshots |
-| `scene` | Szenen-Renderer für draußen: Sonne mit Schattenkarte, Nebel, Instanzen, Figuren, Partikel, UI. Sortiert Unsichtbares aus, Puffer wachsen mit |
-| `particles` | Partikel-Rechnung (Staub, Rauch, Funken), gezeichnet von `scene` |
+| `render` | Der eine Renderer für alle Spiele (Vulkan): Sonne mit Schattenkarte oder Räume mit Lampen, Welt-Boxen, Modelle (instanziert), animierte Figuren, Hologramme, Partikel, zweite Kamera, UI, saubere oder Videoband-Nachbearbeitung, Screenshots. Sortiert Unsichtbares aus, Puffer wachsen mit |
+| `particles` | Partikel-Rechnung (Staub, Rauch, Funken), gezeichnet von `render` |
 | `cull` | Sichtfeld und Hüllkugeln |
 | `collide` | Kollision ohne Physik-Bibliothek: Kisten, Kapseln, Strahlen, Sichtlinien, Stufen |
 | `splash` | Startbild „Gemacht mit Mettgine“: erscheint in jedem Spiel von selbst, nicht überspringbar, immer in Fensterauflösung. Spiele prüfen mit `splash_active()`, ob sie Eingaben annehmen |
@@ -21,7 +20,7 @@ Die Engine der Mett-Gaming-Spiele, entstanden aus [KASSE 0](https://github.com/M
 | `settings` | Einstellungen lesen und speichern |
 | `crash`, `crash_window` | Protokoll, Absturzberichte (auch bei Treiberabstürzen) und Absturzfenster |
 
-Die Shader liegen in `shaders/` und werden beim Bauen mit naga zu SPIR-V übersetzt, ein Vulkan SDK braucht man nicht. Die vorgegebenen Welt-Materialien (Poster, Schilder, Monitor) stammen aus KASSE 0 und liegen in `_world_kasse0.wgsl`; eigene bringt ein Spiel mit `Renderer::with_world_shaders` mit.
+Die Shader liegen in `shaders/` und werden beim Bauen mit naga zu SPIR-V übersetzt, ein Vulkan SDK braucht man nicht. Die vorgegebenen Welt-Materialien (Poster, Schilder, Monitor) stammen aus KASSE 0 und liegen in `_world_kasse0.wgsl`; eigene bringt ein Spiel mit `Config::world` mit.
 
 ## In einem Spiel benutzen
 
@@ -53,6 +52,15 @@ mettgine::crash::init("meinspiel", "MEIN SPIEL", VERSION);
 ```
 
 Einstellungen, Spielstände, Protokoll und Absturzberichte liegen in `%APPDATA%\.mettlauncher\<spiel>` (`crash::data_dir`).
+
+### Zeichnen
+
+```rust
+let mut renderer = Renderer::new(&window, &Config::new(&meshes, &skins, font))?;
+renderer.draw(&FrameInput { view, lighting: Lighting::Sun(sun), post: Post::Clean(clean), /* … */ })?;
+```
+
+Neue Fähigkeiten kommen in diesen Renderer (`Config`, `FrameInput`, `Lighting`, `Post`), nie in einen zweiten.
 
 ### Zuschaltbares
 

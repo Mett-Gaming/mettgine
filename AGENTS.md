@@ -78,7 +78,14 @@ Mettgine ist die gemeinsame Engine der Mett-Gaming-Spiele (Rust, Vulkan). Sie li
   - Traits wie `ClipId`, Parameter, Rückruffunktionen
   - nie `if spiel == "kasse0"`
   - keine fest eingebauten Spielnamen außer in Beispielen und Doku
-- **Altlast, bekannt:** Die Welt-Materialien in `shaders/world.wgsl` (Poster, Schilder, Monitor) stammen aus KASSE 0. Nicht weiter ausbauen. Wer daran arbeitet, macht sie Schritt für Schritt allgemein, ohne KASSE 0 zu verändern.
+- **Altlast, bekannt:** Die vorgegebenen Welt-Materialien (Poster, Schilder, Monitor) in `shaders/_world_kasse0.wgsl` stammen aus KASSE 0. Nicht weiter ausbauen; neue Spiele bringen eigene über `Config::world` mit.
+
+### Streng: nur ein Renderer
+- Es gibt **genau einen Renderer**: `render::Renderer`. Er wird **erweitert**, nie ersetzt, kopiert oder daneben neu gebaut. Das gilt ohne Ausnahme, auch für ein neues Spiel, einen anderen Stil oder einen Versuch.
+- **Verboten:** ein zweiter Renderer in der Engine oder in einem Spiel, eigene Vulkan-Aufrufe in Spielen, ein zweiter Swapchain- oder Bild-Ablauf, doppelte Shader für dasselbe (z. B. eine zweite Modell- oder Figuren-Pipeline).
+- **So kommt Neues dazu:** als Wert in `Config` (beim Aufbau) oder `FrameInput` (pro Bild), als Variante von `Lighting` oder `Post`, als zusätzlicher Pass oder als eigene Welt-Materialien (`WorldShaders`). Ausgeschaltet darf es nichts kosten und kein Bild verändern.
+- **Was es schon gibt, benutzen:** Alle Spiele teilen sich Instanzen, Knochen, Aussortieren, Puffer, Messung, Kantenglättung, Partikel und Startbild.
+- **Vor und nach jedem Umbau am Renderer** Bilder vergleichen (`cargo run --release --example gpu_check <ordner>` und `gpu_check_world <ordner>`, derselbe Ordner): Ohne gewollte Änderung müssen sie Byte für Byte gleich sein.
 
 ## 3. Code-Qualität: übersichtlich, Best Practice für Rust und Vulkan
 Die Engine wird über Jahre von wechselnden Agenten gelesen und erweitert. Darum zählt Übersicht mehr als Kürze.
