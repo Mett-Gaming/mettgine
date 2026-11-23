@@ -34,6 +34,7 @@ use crate::render::swapchain::Swapchain;
 use crate::render::timing::GpuTimer;
 use crate::render::util::{Buffer, Image};
 pub use crate::render::{Result, UiVertex};
+use crate::splash::Splash;
 use ash::vk;
 use bytemuck::{Pod, Zeroable};
 use glam::Mat4;
@@ -166,6 +167,7 @@ pub struct SceneRenderer {
     culling: bool,
     lists: DrawLists,
     timer: GpuTimer,
+    splash: Splash,
     stats: FrameStats,
     /// wiederverwendete Puffer fuer den Bild-Takt
     scratch_insts: Vec<GpuInst>,
@@ -188,6 +190,11 @@ impl SceneRenderer {
     /// Name der Grafikkarte samt Treiber.
     pub fn gpu_name(&self) -> &str {
         &self.ctx.gpu_name
+    }
+
+    /// Laeuft noch das Startbild der Engine? Dann keine Eingaben annehmen.
+    pub fn splash_active(&self) -> bool {
+        self.splash.active()
     }
 
     /// Speichert das naechste fertige Bild als BMP.
@@ -245,6 +252,7 @@ impl Drop for SceneRenderer {
             }
             self.capture.destroy(d);
             self.timer.destroy(d);
+            self.splash.destroy(d);
             let p = &self.pipes;
             for pipe in p
                 .scene

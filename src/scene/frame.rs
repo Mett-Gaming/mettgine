@@ -57,7 +57,7 @@ impl SceneRenderer {
         let sc_image = self.swapchain.images[image_index];
         self.record_screen(cmd, image_index, p, fi, n.ui_count);
         self.timer.mark(d, cmd, fi, "Nachbearbeitung");
-        self.record_present(cmd, sc_image, capture);
+        present::record_present(d, cmd, &self.swapchain, sc_image, capture);
         d.end_command_buffer(cmd)?;
         Ok(())
     }

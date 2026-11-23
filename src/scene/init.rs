@@ -4,7 +4,7 @@ use super::descriptors::{create_descriptors, FONT_MIPS};
 use super::pipelines::create_pipelines;
 use super::*;
 use crate::gpu::{MeshData, SkinData};
-use crate::render::transfer::{halve_r8, one_shot, upload_r8_mips};
+use crate::render::transfer::{halve_r8, one_shot, upload_mips};
 use crate::render::util::{image_barrier, ImageDesc};
 use std::mem::size_of;
 use winit::window::Window;
@@ -45,7 +45,7 @@ unsafe fn upload_font(
     }
     let mut levels = vec![font];
     levels.extend(small.iter().map(|(px, w, h)| (&px[..], *w, *h)));
-    upload_r8_mips(ctx, pool, img, &levels)
+    upload_mips(ctx, pool, img, &levels)
 }
 
 fn per_frame(ctx: &Context, bytes: usize, usage: vk::BufferUsageFlags) -> Result<Vec<Buffer>> {
@@ -117,6 +117,7 @@ impl SceneRenderer {
                 swapchain.format,
             )?;
             let (command_pool, frames) = present::create_frames(&ctx, FRAMES_IN_FLIGHT)?;
+            let splash = Splash::new(&ctx, command_pool, swapchain.format, FRAMES_IN_FLIGHT)?;
             let timer = GpuTimer::new(&ctx, FRAMES_IN_FLIGHT)?;
             upload_font(&ctx, command_pool, &font_img, font, mips)?;
             // Platzhalter-Tiefe einmal in einen lesbaren Zustand bringen
@@ -205,6 +206,7 @@ impl SceneRenderer {
                 culling: true,
                 lists: DrawLists::default(),
                 timer,
+                splash,
                 stats: FrameStats::default(),
                 scratch_insts: Vec::with_capacity(1024),
                 scratch_bones: Vec::with_capacity(1024),

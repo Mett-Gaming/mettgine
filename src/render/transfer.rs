@@ -78,7 +78,7 @@ pub(crate) unsafe fn upload_r8(
     width: u32,
     height: u32,
 ) -> Result<()> {
-    upload_r8_mips(ctx, pool, img, &[(pixels, width, height)])
+    upload_mips(ctx, pool, img, &[(pixels, width, height)])
 }
 
 /// Halbiert ein R8-Bild (Mittel aus je 2x2 Bildpunkten).
@@ -96,8 +96,9 @@ pub(crate) fn halve_r8(px: &[u8], w: u32, h: u32) -> (Vec<u8>, u32, u32) {
     (out, nw, nh)
 }
 
-/// Wie [`upload_r8`] mit allen Verkleinerungsstufen (Pixel, Breite, Hoehe), groesste zuerst.
-pub(crate) unsafe fn upload_r8_mips(
+/// Wie [`upload_r8`] fuer beliebige Formate, mit allen Verkleinerungsstufen
+/// (Pixel, Breite, Hoehe), groesste zuerst.
+pub(crate) unsafe fn upload_mips(
     ctx: &Context,
     pool: vk::CommandPool,
     img: &Image,

@@ -3,7 +3,7 @@
 use super::context::Context;
 use super::swapchain::Swapchain;
 use super::transfer::write_bmp;
-use super::util::Buffer;
+use super::util::{image_barrier, Buffer};
 use super::Result;
 use ash::vk;
 use std::path::PathBuf;
@@ -123,6 +123,83 @@ pub(crate) unsafe fn submit_and_present(
         Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => Ok(true),
         Err(e) => Err(e.into()),
     }
+}
+
+/// Swapchain-Bild zum Anzeigen freigeben, vorher ggf. in den Foto-Puffer kopieren.
+///
+/// # Safety
+/// `cmd` muss aufgenommen werden, das Bild gerade Farbziel sein.
+pub(crate) unsafe fn record_present(
+    d: &ash::Device,
+    cmd: vk::CommandBuffer,
+    sc: &Swapchain,
+    sc_image: vk::Image,
+    capture: Option<vk::Buffer>,
+) {
+    let mut layout = vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL;
+    let mut src_stage = vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT;
+    let mut src_access = vk::AccessFlags::COLOR_ATTACHMENT_WRITE;
+    if let Some(buf) = capture {
+        let extent = sc.extent;
+        d.cmd_pipeline_barrier(
+            cmd,
+            vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+            vk::PipelineStageFlags::TRANSFER,
+            vk::DependencyFlags::empty(),
+            &[],
+            &[],
+            &[image_barrier(
+                sc_image,
+                vk::ImageAspectFlags::COLOR,
+                layout,
+                vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+                vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
+                vk::AccessFlags::TRANSFER_READ,
+            )],
+        );
+        d.cmd_copy_image_to_buffer(
+            cmd,
+            sc_image,
+            vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+            buf,
+            &[vk::BufferImageCopy {
+                buffer_offset: 0,
+                buffer_row_length: 0,
+                buffer_image_height: 0,
+                image_subresource: vk::ImageSubresourceLayers {
+                    aspect_mask: vk::ImageAspectFlags::COLOR,
+                    mip_level: 0,
+                    base_array_layer: 0,
+                    layer_count: 1,
+                },
+                image_offset: vk::Offset3D::default(),
+                image_extent: vk::Extent3D {
+                    width: extent.width,
+                    height: extent.height,
+                    depth: 1,
+                },
+            }],
+        );
+        layout = vk::ImageLayout::TRANSFER_SRC_OPTIMAL;
+        src_stage = vk::PipelineStageFlags::TRANSFER;
+        src_access = vk::AccessFlags::TRANSFER_READ;
+    }
+    d.cmd_pipeline_barrier(
+        cmd,
+        src_stage,
+        vk::PipelineStageFlags::BOTTOM_OF_PIPE,
+        vk::DependencyFlags::empty(),
+        &[],
+        &[],
+        &[image_barrier(
+            sc_image,
+            vk::ImageAspectFlags::COLOR,
+            layout,
+            vk::ImageLayout::PRESENT_SRC_KHR,
+            src_access,
+            vk::AccessFlags::empty(),
+        )],
+    );
 }
 
 /// Bildschirmfoto: gewuenschter Pfad und wiederverwendeter Zielpuffer.

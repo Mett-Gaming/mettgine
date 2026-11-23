@@ -108,24 +108,63 @@ struct Check {
 }
 
 impl Check {
-    /// Zeichnet dreimal (alle Bilder im Flug) und liefert das letzte Bild als BGR-Bildpunkte.
-    fn shot(&mut self, s: &Shot) -> Result<Vec<[u8; 3]>, String> {
+    fn draw(&mut self, s: &Shot) -> Result<(), String> {
+        self.renderer.queue_particles(&s.particles);
+        self.renderer
+            .draw(&params(), &s.meshes, &s.skins, &s.bones, &s.ui)
+            .map_err(|e| format!("Zeichnen: {e}"))
+    }
+
+    /// Ein Bild zeichnen und als BGR-Bildpunkte liefern.
+    fn one(&mut self, s: &Shot) -> Result<Vec<[u8; 3]>, String> {
         let _ = std::fs::remove_file(&self.path);
-        for i in 0..3 {
-            if i == 2 {
-                self.renderer.capture_next(self.path.clone());
-            }
-            self.renderer.queue_particles(&s.particles);
-            self.renderer
-                .draw(&params(), &s.meshes, &s.skins, &s.bones, &s.ui)
-                .map_err(|e| format!("Zeichnen: {e}"))?;
-        }
+        self.renderer.capture_next(self.path.clone());
+        self.draw(s)?;
         let bmp = std::fs::read(&self.path).map_err(|e| format!("kein Bild: {e}"))?;
         let _ = std::fs::remove_file(&self.path);
         Ok(bmp[54..].chunks(4).map(|p| [p[0], p[1], p[2]]).collect())
     }
 
+    /// Zeichnet dreimal (alle Bilder im Flug) und liefert das letzte Bild.
+    fn shot(&mut self, s: &Shot) -> Result<Vec<[u8; 3]>, String> {
+        self.draw(s)?;
+        self.draw(s)?;
+        self.one(s)
+    }
+
+    /// Startbild abspielen; prueft ein Bild mittendrin.
+    fn check_splash(&mut self) -> Result<(), String> {
+        let start = std::time::Instant::now();
+        let mut seen = false;
+        while self.renderer.splash_active() {
+            let now = start.elapsed().as_secs_f32();
+            ensure(now < 30.0, "Startbild endet nicht")?;
+            if !seen && now > 1.6 {
+                seen = true;
+                let px = self.one(&Shot::default())?;
+                let cream = px.iter().filter(|p| p.iter().all(|c| *c > 190)).count();
+                ensure(cream > 300, &format!("Schriftzug fehlt ({cream})"))?;
+                let back = px
+                    .iter()
+                    .filter(|p| p[2].abs_diff(18) < 2 && p[0].abs_diff(11) < 2);
+                ensure(
+                    back.count() > px.len() / 2,
+                    "Startbild: falscher Hintergrund",
+                )?;
+            } else {
+                self.draw(&Shot::default())?;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(8));
+        }
+        println!("Startbild: {:.1} s", start.elapsed().as_secs_f32());
+        ensure(
+            seen && start.elapsed().as_secs_f32() > 2.0,
+            "Startbild zu kurz",
+        )
+    }
+
     fn run(&mut self) -> Result<(), String> {
+        self.check_splash()?;
         let scene = Shot::scene();
         let on = self.shot(&scene)?;
         let st = self.renderer.stats();

@@ -14,6 +14,7 @@ pub(crate) mod util;
 use crate::cull::{Frustum, SkinBounds, Sphere};
 use crate::gpu::{GpuInstance, GpuLight, MeshData};
 use crate::profile::FrameStats;
+use crate::splash::Splash;
 use ash::vk;
 use bytemuck::{Pod, Zeroable};
 use context::Context;
@@ -194,6 +195,7 @@ pub struct Renderer {
     needs_recreate: bool,
     capture: Capture,
     timer: GpuTimer,
+    splash: Splash,
     stats: FrameStats,
     mesh_bounds: Vec<Sphere>,
     skin_bounds: Vec<SkinBounds>,
@@ -234,6 +236,11 @@ impl Renderer {
         &self.ctx.gpu_name
     }
 
+    /// Laeuft noch das Startbild der Engine? Dann keine Eingaben annehmen.
+    pub fn splash_active(&self) -> bool {
+        self.splash.active()
+    }
+
     /// Speichert das naechste fertige Bild (nach VHS-Pass) als BMP.
     pub fn capture_next(&mut self, path: std::path::PathBuf) {
         self.capture.request(path);
@@ -267,6 +274,7 @@ impl Drop for Renderer {
             }
             self.capture.destroy(d);
             self.timer.destroy(d);
+            self.splash.destroy(d);
             for b in self.mesh_inst_bufs.iter().chain(self.ui_bufs.iter()) {
                 b.destroy(d);
             }

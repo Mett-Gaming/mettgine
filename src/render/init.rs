@@ -281,6 +281,7 @@ impl Renderer {
             )?;
 
             let (command_pool, frames) = present::create_frames(&ctx, FRAMES_IN_FLIGHT)?;
+            let splash = Splash::new(&ctx, command_pool, swapchain.format, FRAMES_IN_FLIGHT)?;
             let timer = GpuTimer::new(&ctx, FRAMES_IN_FLIGHT)?;
 
             // Font-Atlas hochladen
@@ -388,6 +389,7 @@ impl Renderer {
                 needs_recreate: false,
                 capture: Capture::default(),
                 timer,
+                splash,
                 stats: FrameStats::default(),
                 mesh_bounds: meshes
                     .iter()

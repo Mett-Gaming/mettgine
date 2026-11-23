@@ -9,6 +9,7 @@ Die Engine der Mett-Gaming-Spiele, entstanden aus [KASSE 0](https://github.com/M
 | `particles` | Partikel-Rechnung (Staub, Rauch, Funken), gezeichnet von `scene` |
 | `cull` | Sichtfeld und Hüllkugeln |
 | `collide` | Kollision ohne Physik-Bibliothek: Kisten, Kapseln, Strahlen, Sichtlinien, Stufen |
+| `splash` | Startbild „Gemacht mit Mettgine“: erscheint in jedem Spiel von selbst, nicht überspringbar, immer in Fensterauflösung. Spiele prüfen mit `splash_active()`, ob sie Eingaben annehmen |
 | `profile` | Messanzeige: Prozessor- und Grafikzeiten, Ruckler, Zeichenbefehle |
 | `anim` | Knochen-Animation (`.k0a` v2): Überblenden, Einmal-Clips, Kopf-Blickziel, Zucken, Strecken, Kopfdrehung, Stop-Motion |
 | `gpu` | Datenformate zwischen Spiel und Renderer: Welt-Boxen, Lichter, Modelle, Figuren (`.k0s`) |
@@ -75,6 +76,7 @@ Ob der Szenen-Renderer auf der eigenen Grafikkarte richtig zeichnet, prüft ohne
 
 ```powershell
 cargo run --release --example gpu_check
+cargo run --release --example gpu_check_world <ordner>   # Vergleichsbilder vor/nach einem Umbau
 ```
 
 ## Arbeiten ohne Pull-Requests
@@ -106,4 +108,6 @@ So bekommt jedes andere Spiel die Änderung beim nächsten `git submodule update
 
 ## Lizenzen
 
-Die Schrift-Atlanten und Modelle gehören den Spielen, nicht der Engine. Die Engine nutzt `font8x8` (MIT/Apache-2.0) für den Bitmap-Text.
+Die Schrift-Atlanten und Modelle gehören den Spielen, nicht der Engine. Die Engine nutzt `font8x8` (MIT/Apache-2.0) für den Bitmap-Text und `png` (MIT/Apache-2.0) für das Startbild.
+
+Startbild (`assets/splash.png`): Schriftzug aus Archivo Black (OFL), Mettbrötchen selbst gezeichnet, Dino aus dem Logo des Mett Launchers (Herkunft und Lizenz des Fotos noch nicht belegt).

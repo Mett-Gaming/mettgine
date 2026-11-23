@@ -14,6 +14,8 @@ bytemuck = { version = "1", features = ["derive"] }
 font8x8 = "0.3"
 # Schrift-Atlas aus TTF (text)
 ab_glyph = "0.2"
+# Startbild entpacken (splash)
+png = "0.17"
 # Controller (input)
 gilrs = "0.11"
 # Audio-Wiedergabe (audio)

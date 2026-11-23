@@ -27,5 +27,6 @@ pub mod profile;
 pub mod render;
 pub mod scene;
 pub mod settings;
+mod splash;
 pub mod text;
 pub mod ui;

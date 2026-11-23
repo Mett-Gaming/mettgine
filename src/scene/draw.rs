@@ -171,6 +171,22 @@ impl SceneRenderer {
                 return Ok(());
             };
 
+            if self.splash.active() {
+                let cap = self.capture.prepare(&self.ctx, &self.swapchain)?;
+                let index = image_index as usize;
+                let d = &self.ctx.device;
+                self.splash
+                    .record(d, frame.cmd, fi, &self.swapchain, index, cap)?;
+                if present::submit_and_present(&self.ctx, &self.swapchain, &frame, image_index)? {
+                    self.needs_recreate = true;
+                }
+                if cap.is_some() {
+                    self.capture.finish(&self.ctx, &self.swapchain)?;
+                }
+                self.particles.clear();
+                self.frame_index = (fi + 1) % FRAMES_IN_FLIGHT;
+                return Ok(());
+            }
             self.timer.collect(&self.ctx.device, fi, &mut self.stats);
             let start = Instant::now();
             let counts = self.fill_frame(fi, p, meshes, skins, bones, ui)?;
