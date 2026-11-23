@@ -2,6 +2,7 @@
 
 use super::draw::build_groups;
 use super::*;
+use glam::Vec3;
 
 fn md(mesh: usize, shadow: bool) -> MeshDraw {
     let m = MeshDraw::new(mesh, Mat4::IDENTITY);

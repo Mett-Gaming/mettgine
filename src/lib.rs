@@ -11,11 +11,15 @@
 pub mod anim;
 pub mod audio;
 pub mod canvas;
+pub mod collide;
 pub mod crash;
 pub mod crash_window;
+pub mod cull;
 pub mod gpu;
 pub mod input;
 pub mod net;
+pub mod particles;
+pub mod profile;
 pub mod render;
 pub mod scene;
 pub mod settings;
