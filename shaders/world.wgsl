@@ -27,9 +27,9 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     if (material > 4.5) {
         let col = sign_face(in);
         if (in.extra.z > 0.0) {
-            let f = flicker(in.extra.y, in.extra.w, pc.params.x);
+            let f = flicker(in.extra.y, in.extra.w, g.cam_pos.w);
             let lit = col * in.extra.z * f;
-            return vec4<f32>(mix(lit, pc.fog_color.rgb, fog_amount(p) * 0.4), 1.0);
+            return vec4<f32>(mix(lit, g.horizon.rgb, fog_amount(p) * 0.4), 1.0);
         }
         return vec4<f32>(shade(col, p, in.normal), 1.0);
     }
@@ -41,16 +41,16 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         if (h.x < h.z) {
             uv.x = (p.z - c.z) / (2.0 * h.z) + 0.5;
         }
-        let decay = pc.fog_color.w;
-        let pc_col = poster(uv, in.extra.y, base, decay, pc.params.x);
+        let decay = g.extra.x;
+        let pc_col = poster(uv, in.extra.y, base, decay, g.cam_pos.w);
         let lit = shade(pc_col, p, in.normal) + pc_col * 0.12 * (0.5 + decay);
         return vec4<f32>(lit, 1.0);
     }
     // Leuchtende Flaechen (Roehren, Schilder, Glastuer)
     if (material > 2.5) {
-        let f = flicker(in.extra.y, in.extra.w, pc.params.x);
+        let f = flicker(in.extra.y, in.extra.w, g.cam_pos.w);
         let lit = base * in.extra.z * f;
-        return vec4<f32>(mix(lit, pc.fog_color.rgb, fog_amount(p) * 0.4), 1.0);
+        return vec4<f32>(mix(lit, g.horizon.rgb, fog_amount(p) * 0.4), 1.0);
     }
     // Boden: Fliesen mit Fugen
     if (material > 0.5 && material < 1.5) {

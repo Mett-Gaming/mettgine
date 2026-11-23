@@ -1,6 +1,6 @@
 // Himmel: Verlauf vom Horizont nach oben, dazu die Sonne. Bildschirmfuellendes Dreieck.
 
-#include "_scene.wgsl"
+#include "_common.wgsl"
 
 struct VsOut {
     @builtin(position) pos: vec4<f32>,

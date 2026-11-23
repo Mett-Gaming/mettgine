@@ -1,14 +1,6 @@
-// Mesh-Shader: geladene Modelle (Mannequins, Wagen, Kasse ...) und dynamische Boxen.
+// Modelle (fest und beweglich).
 
 #include "_common.wgsl"
-
-struct MeshInst {
-    model: mat4x4<f32>,
-    tint: vec4<f32>,  // rgb = Farbmultiplikator
-    extra: vec4<f32>, // x = Eigenleuchten
-};
-
-@group(0) @binding(0) var<storage, read> minst: array<MeshInst>;
 
 struct VsIn {
     @location(0) pos: vec3<f32>,
@@ -21,30 +13,35 @@ struct VsOut {
     @location(0) world_pos: vec3<f32>,
     @location(1) normal: vec3<f32>,
     @location(2) color: vec3<f32>,
-    @location(3) emissive: f32,
+    @location(3) glow: f32,
 };
 
 @vertex
 fn vs_main(v: VsIn, @builtin(instance_index) ii: u32) -> VsOut {
-    let inst = minst[ii];
+    let inst = insts[ii];
     var wp = inst.model * vec4<f32>(v.pos, 1.0);
-    // Ware im Regal (statisch, extra.z = 1) folgt dem Live-Verbiegen der Gaenge
-    if (inst.extra.z > 0.5) {
+    // feste Modelle folgen dem Schwanken der Boxen
+    if (inst.extra.w > 0.5) {
         let s = sway(wp.xyz);
         wp = wp + vec4<f32>(s.x, s.y * (1.0 - smoothstep(2.6, 3.4, wp.y)), 0.0, 0.0);
     }
     var out: VsOut;
-    out.clip = pc.view_proj * wp;
+    out.clip = g.view_proj * wp;
     out.world_pos = wp.xyz;
-    out.normal = normalize((inst.model * vec4<f32>(v.normal, 0.0)).xyz);
+    out.normal = vertex_normal((inst.model * vec4<f32>(v.normal, 0.0)).xyz);
     out.color = v.color * inst.tint.rgb;
-    out.emissive = inst.extra.x;
+    // Blinken (Warnung vor Faehigkeiten): pulsierendes Eigenleuchten
+    let blink = inst.extra.y * (0.5 + 0.5 * sin(g.cam_pos.w * 18.0));
+    out.glow = inst.tint.a + blink;
     return out;
 }
 
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let lit = shade(in.color, in.world_pos, in.normal);
-    let glow = mix(in.color * in.emissive, pc.fog_color.rgb, fog_amount(in.world_pos) * 0.4);
+    if (is_rooms()) {
+        return vec4<f32>(lit + glow_rooms(in.color * in.glow, in.world_pos), 1.0);
+    }
+    let glow = in.color * in.glow * (1.0 - fog_amount(in.world_pos));
     return vec4<f32>(lit + glow, 1.0);
 }

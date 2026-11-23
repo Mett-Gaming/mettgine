@@ -1,6 +1,6 @@
 // Schattenkarte fuer animierte Figuren.
 
-#include "_scene.wgsl"
+#include "_common.wgsl"
 
 @vertex
 fn vs_main(

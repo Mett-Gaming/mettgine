@@ -1,9 +1,8 @@
 //! Mettgine: die Engine der Mett-Gaming-Spiele (entstanden aus KASSE 0).
 //!
-//! - `render`: Vulkan-Renderer (Welt-Boxen, Modelle, animierte Figuren, Hologramme,
-//!   Ueberwachungskamera, UI-Ebene, VHS-Nachbearbeitung). Die Shader liegen in `shaders/`;
-//!   die Welt-Materialien (Poster, Schilder, Monitor) stammen noch aus KASSE 0.
-//! - `scene`, `particles`, `cull`: Szenen-Renderer fuer draussen, Partikel, Sichtfeld.
+//! - `render`: der eine Vulkan-Renderer: Welt-Boxen mit Lampen, Sonne mit Schattenkarte,
+//!   Modelle, animierte Figuren, Hologramme, Partikel, zweite Kamera, UI, Nachbearbeitung.
+//!   Die Shader liegen in `shaders/`. Dazu `particles`, `cull`, `splash`.
 //! - `collide`: Kollision und Strahlen. `profile`: Messanzeige.
 //! - `audio`, `input`, `canvas`, `text`, `settings`: Klang, Eingabe, Menues, Einstellungen.
 //! - `net`: Mehrspieler-Verbindung und Abgleich.
@@ -25,7 +24,6 @@ pub mod net;
 pub mod particles;
 pub mod profile;
 pub mod render;
-pub mod scene;
 pub mod settings;
 mod splash;
 pub mod text;

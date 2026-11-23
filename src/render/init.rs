@@ -1,406 +1,316 @@
-//! Renderer aufbauen: Bilder, Sampler, Descriptor-Sets, Layouts, Pipelines, Befehlspuffer,
-//! Vertex- und Instanzpuffer.
+//! Aufbau des Renderers: Bilder, Befehlspuffer, Puffer.
 
-use super::pipelines::{create_pipelines, Pipelines};
+use super::descriptors::FONT_MIPS;
+use super::pipelines::create_pipelines;
+use super::transfer::{halve_r8, one_shot, upload_mips, upload_r8};
+use super::util::{image_barrier, ImageDesc};
 use super::*;
+use std::mem::size_of;
+use winit::window::Window;
+
+/// Alle Vertices hintereinander in einen Puffer; liefert (Start, Anzahl) je Eintrag.
+fn vertex_buffer<T: Pod>(ctx: &Context, items: &[&[T]]) -> Result<(Buffer, Vec<(u32, u32)>)> {
+    let mut all: Vec<T> = Vec::new();
+    let mut ranges = Vec::with_capacity(items.len());
+    for v in items {
+        ranges.push((all.len() as u32, v.len() as u32));
+        all.extend_from_slice(v);
+    }
+    let bytes: &[u8] = bytemuck::cast_slice(&all);
+    let buf = Buffer::new_host(
+        ctx,
+        bytes.len().max(64) as u64,
+        vk::BufferUsageFlags::VERTEX_BUFFER,
+    )?;
+    buf.write(bytes);
+    Ok((buf, ranges))
+}
+
+fn per_frame(ctx: &Context, bytes: usize, usage: vk::BufferUsageFlags) -> Result<Vec<Buffer>> {
+    (0..FRAMES_IN_FLIGHT)
+        .map(|_| Buffer::new_host(ctx, bytes as u64, usage))
+        .collect()
+}
+
+/// Graustufen-Textur anlegen und hochladen, mit `mips` Verkleinerungsstufen.
+unsafe fn r8_texture(
+    ctx: &Context,
+    pool: vk::CommandPool,
+    (px, width, height): (&[u8], u32, u32),
+    mips: u32,
+) -> Result<Image> {
+    // klein genug, dass auch die kleinste Stufe noch einen Bildpunkt hat
+    let mips = mips.min(width.min(height).max(1).ilog2() + 1);
+    let img = Image::with(
+        ctx,
+        &ImageDesc {
+            width,
+            height,
+            format: vk::Format::R8_UNORM,
+            usage: vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST,
+            aspect: vk::ImageAspectFlags::COLOR,
+            samples: vk::SampleCountFlags::TYPE_1,
+            mips,
+        },
+    )?;
+    if mips == 1 {
+        upload_r8(ctx, pool, &img, px, width, height)?;
+        return Ok(img);
+    }
+    let mut small: Vec<(Vec<u8>, u32, u32)> = Vec::new();
+    for _ in 1..mips {
+        let next = match small.last() {
+            Some((px, w, h)) => halve_r8(px, *w, *h),
+            None => halve_r8(px, width, height),
+        };
+        small.push(next);
+    }
+    let mut levels = vec![(px, width, height)];
+    levels.extend(small.iter().map(|(px, w, h)| (&px[..], *w, *h)));
+    upload_mips(ctx, pool, &img, &levels)?;
+    Ok(img)
+}
+
+/// Farbbild, in das gezeichnet und aus dem gelesen wird.
+fn color_target(ctx: &Context, e: vk::Extent2D) -> Result<Image> {
+    let usage = vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::SAMPLED;
+    let aspect = vk::ImageAspectFlags::COLOR;
+    Image::new(ctx, e.width, e.height, COLOR_FORMAT, usage, aspect)
+}
+
+/// Tiefenbild, `sampled` = auch lesbar (Schattenkarte).
+fn depth_target(ctx: &Context, e: vk::Extent2D, sampled: bool) -> Result<Image> {
+    let mut usage = vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT;
+    if sampled {
+        usage |= vk::ImageUsageFlags::SAMPLED;
+    }
+    let aspect = vk::ImageAspectFlags::DEPTH;
+    Image::new(ctx, e.width, e.height, DEPTH_FORMAT, usage, aspect)
+}
+
+fn square(n: u32) -> vk::Extent2D {
+    vk::Extent2D {
+        width: n,
+        height: n,
+    }
+}
+
+/// Bilder einmal in einen lesbaren Zustand bringen (auch wenn ihr Pass nie laeuft).
+unsafe fn make_readable(
+    ctx: &Context,
+    pool: vk::CommandPool,
+    images: &[(&Image, vk::ImageAspectFlags)],
+) -> Result<()> {
+    let barriers: Vec<_> = images
+        .iter()
+        .map(|(i, aspect)| {
+            image_barrier(
+                i.image,
+                *aspect,
+                vk::ImageLayout::UNDEFINED,
+                vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                vk::AccessFlags::empty(),
+                vk::AccessFlags::SHADER_READ,
+            )
+        })
+        .collect();
+    one_shot(ctx, pool, |cmd| {
+        ctx.device.cmd_pipeline_barrier(
+            cmd,
+            vk::PipelineStageFlags::TOP_OF_PIPE,
+            vk::PipelineStageFlags::FRAGMENT_SHADER,
+            vk::DependencyFlags::empty(),
+            &[],
+            &[],
+            &barriers,
+        );
+    })
+}
+
+impl SecondCamera {
+    fn new(ctx: &Context, size: Option<(u32, u32)>) -> Result<Self> {
+        let extent = size.map_or(square(1), |(width, height)| vk::Extent2D { width, height });
+        Ok(Self {
+            color: color_target(ctx, extent)?,
+            depth: depth_target(ctx, extent, false)?,
+            extent,
+            enabled: size.is_some(),
+        })
+    }
+}
+
+impl UiLayer {
+    fn new(ctx: &Context, size: UiSize) -> Result<Self> {
+        let (extent, enabled) = match size {
+            UiSize::Fixed(width, height) => (vk::Extent2D { width, height }, true),
+            UiSize::Height(_) => (square(1), false),
+        };
+        Ok(Self {
+            image: color_target(ctx, extent)?,
+            extent,
+            enabled,
+        })
+    }
+}
 
 impl Renderer {
-    /// Wie [`Renderer::new`], aber mit eigenen Welt-Materialien des Spiels.
-    pub fn with_world_shaders(
-        window: &Window,
-        meshes: &[MeshData],
-        skins: &[crate::gpu::SkinData],
-        font: &[u8],
-        signs: (&[u8], u32, u32),
-        world: &WorldShaders,
-    ) -> Result<Self> {
+    /// Baut den Renderer fuer `window`.
+    pub fn new(window: &Window, cfg: &Config) -> Result<Self> {
         let size = window.inner_size();
+        let window_size = (size.width.max(1), size.height.max(1));
         let ctx = Context::new(window)?;
-        let swapchain = Swapchain::new(&ctx, size.width, size.height, vk::SwapchainKHR::null())?;
-        let color = Image::new(
-            &ctx,
-            RENDER_WIDTH,
-            RENDER_HEIGHT,
-            COLOR_FORMAT,
-            vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::SAMPLED,
-            vk::ImageAspectFlags::COLOR,
-        )?;
-        let depth = Image::new(
-            &ctx,
-            RENDER_WIDTH,
-            RENDER_HEIGHT,
-            DEPTH_FORMAT,
-            vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
-            vk::ImageAspectFlags::DEPTH,
-        )?;
-        let font_img = Image::new(
-            &ctx,
-            128,
-            128,
-            vk::Format::R8_UNORM,
-            vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST,
-            vk::ImageAspectFlags::COLOR,
-        )?;
-        let sign_img = Image::new(
-            &ctx,
-            signs.1,
-            signs.2,
-            vk::Format::R8_UNORM,
-            vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST,
-            vk::ImageAspectFlags::COLOR,
-        )?;
-        // Eigene UI-Ebene: Text bekommt im VHS-Pass nur wenig Stoerung ab
-        let ui_target = Image::new(
-            &ctx,
-            RENDER_WIDTH,
-            RENDER_HEIGHT,
-            COLOR_FORMAT,
-            vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::SAMPLED,
-            vk::ImageAspectFlags::COLOR,
-        )?;
-        let monitor = Image::new(
-            &ctx,
-            MONITOR_WIDTH,
-            MONITOR_HEIGHT,
-            COLOR_FORMAT,
-            vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::SAMPLED,
-            vk::ImageAspectFlags::COLOR,
-        )?;
-        let monitor_depth = Image::new(
-            &ctx,
-            MONITOR_WIDTH,
-            MONITOR_HEIGHT,
-            DEPTH_FORMAT,
-            vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
-            vk::ImageAspectFlags::DEPTH,
-        )?;
-
+        let swapchain =
+            Swapchain::new(&ctx, window_size.0, window_size.1, vk::SwapchainKHR::null())?;
+        let offscreen = offscreen_extent(window_size, cfg.resolution);
+        let samples = vk::SampleCountFlags::TYPE_1;
+        let (color, depth, ms_color) = Self::make_targets(&ctx, offscreen, samples)?;
+        let shadow = depth_target(&ctx, square(SHADOW_SIZE), true)?;
+        let dummy_shadow = depth_target(&ctx, square(1), true)?;
+        let second = SecondCamera::new(&ctx, cfg.second_camera)?;
+        let ui_layer = UiLayer::new(&ctx, cfg.ui)?;
+        let setup = SceneSetup {
+            depth_compare: if cfg.last_wins {
+                vk::CompareOp::LESS_OR_EQUAL
+            } else {
+                vk::CompareOp::LESS
+            },
+            world_vert: cfg.world.vert.to_vec(),
+            world_frag: cfg.world.frag.to_vec(),
+        };
+        let storage = vk::BufferUsageFlags::STORAGE_BUFFER;
+        let uniform = vk::BufferUsageFlags::UNIFORM_BUFFER;
+        let vertex = vk::BufferUsageFlags::VERTEX_BUFFER;
+        let mesh_lists: Vec<&[_]> = cfg.meshes.iter().map(|m| &m.vertices[..]).collect();
+        let (mesh_vertex_buf, mesh_ranges) = vertex_buffer(&ctx, &mesh_lists)?;
+        let skin_lists: Vec<&[_]> = cfg.skins.iter().map(|s| &s.vertices[..]).collect();
+        let (skin_vertex_buf, skin_ranges) = vertex_buffer(&ctx, &skin_lists)?;
+        // SAFETY: alle Handles stammen von diesem Geraet; Aufbau laeuft vor dem ersten Bild.
         unsafe {
             let d = &ctx.device;
-            let sampler = d.create_sampler(
-                &vk::SamplerCreateInfo::default()
-                    .mag_filter(vk::Filter::NEAREST)
-                    .min_filter(vk::Filter::NEAREST)
-                    .address_mode_u(vk::SamplerAddressMode::CLAMP_TO_EDGE)
-                    .address_mode_v(vk::SamplerAddressMode::CLAMP_TO_EDGE)
-                    .address_mode_w(vk::SamplerAddressMode::CLAMP_TO_EDGE)
-                    .max_lod(0.0),
-                None,
-            )?;
-
-            let sign_sampler = d.create_sampler(
-                &vk::SamplerCreateInfo::default()
-                    .mag_filter(vk::Filter::LINEAR)
-                    .min_filter(vk::Filter::LINEAR)
-                    .address_mode_u(vk::SamplerAddressMode::CLAMP_TO_EDGE)
-                    .address_mode_v(vk::SamplerAddressMode::CLAMP_TO_EDGE)
-                    .address_mode_w(vk::SamplerAddressMode::CLAMP_TO_EDGE)
-                    .max_lod(0.0),
-                None,
-            )?;
-
-            // Szene: binding 0 = Instanzen (Vertex), binding 1 = Lichter (Fragment), 2 = Schild-Atlas, 3 = Sampler
-            let scene_bindings = [
-                binding(
-                    0,
-                    vk::DescriptorType::STORAGE_BUFFER,
-                    vk::ShaderStageFlags::VERTEX,
-                ),
-                binding(
-                    1,
-                    vk::DescriptorType::STORAGE_BUFFER,
-                    vk::ShaderStageFlags::FRAGMENT,
-                ),
-                binding(
-                    2,
-                    vk::DescriptorType::SAMPLED_IMAGE,
-                    vk::ShaderStageFlags::FRAGMENT,
-                ),
-                binding(
-                    3,
-                    vk::DescriptorType::SAMPLER,
-                    vk::ShaderStageFlags::FRAGMENT,
-                ),
-                // 4 = Knochen-Matrizen der animierten Figuren
-                binding(
-                    4,
-                    vk::DescriptorType::STORAGE_BUFFER,
-                    vk::ShaderStageFlags::VERTEX,
-                ),
-                // 5 = Bild der Ueberwachungskamera (Monitor-Material)
-                binding(
-                    5,
-                    vk::DescriptorType::SAMPLED_IMAGE,
-                    vk::ShaderStageFlags::FRAGMENT,
-                ),
-            ];
-            let scene_set_layout = d.create_descriptor_set_layout(
-                &vk::DescriptorSetLayoutCreateInfo::default().bindings(&scene_bindings),
-                None,
-            )?;
-            // Textur: binding 0 = Bild, binding 1 = Sampler, binding 2 = zweites Bild (UI-Ebene im Post-Pass)
-            let tex_bindings = [
-                binding(
-                    0,
-                    vk::DescriptorType::SAMPLED_IMAGE,
-                    vk::ShaderStageFlags::FRAGMENT,
-                ),
-                binding(
-                    1,
-                    vk::DescriptorType::SAMPLER,
-                    vk::ShaderStageFlags::FRAGMENT,
-                ),
-                binding(
-                    2,
-                    vk::DescriptorType::SAMPLED_IMAGE,
-                    vk::ShaderStageFlags::FRAGMENT,
-                ),
-            ];
-            let tex_set_layout = d.create_descriptor_set_layout(
-                &vk::DescriptorSetLayoutCreateInfo::default().bindings(&tex_bindings),
-                None,
-            )?;
-
-            // Welt + statische Waren + je Frame ein Set fuer dynamische Meshes
-            let scene_sets = 3 + FRAMES_IN_FLIGHT as u32;
-            let pool_sizes = [
-                vk::DescriptorPoolSize {
-                    ty: vk::DescriptorType::STORAGE_BUFFER,
-                    descriptor_count: 3 * scene_sets,
-                },
-                vk::DescriptorPoolSize {
-                    ty: vk::DescriptorType::SAMPLED_IMAGE,
-                    descriptor_count: 4 + 2 * scene_sets,
-                },
-                vk::DescriptorPoolSize {
-                    ty: vk::DescriptorType::SAMPLER,
-                    descriptor_count: 2 + scene_sets,
-                },
-            ];
-            let descriptor_pool = d.create_descriptor_pool(
-                &vk::DescriptorPoolCreateInfo::default()
-                    .max_sets(scene_sets + 2)
-                    .pool_sizes(&pool_sizes),
-                None,
-            )?;
-            let mut layouts = vec![scene_set_layout; scene_sets as usize];
-            layouts.push(tex_set_layout);
-            layouts.push(tex_set_layout);
-            let sets = d.allocate_descriptor_sets(
-                &vk::DescriptorSetAllocateInfo::default()
-                    .descriptor_pool(descriptor_pool)
-                    .set_layouts(&layouts),
-            )?;
-            let world_set = sets[0];
-            let static_set = sets[1];
-            let world_set_cam = sets[2];
-            let mesh_sets = sets[3..scene_sets as usize].to_vec();
-            let post_set = sets[scene_sets as usize];
-            let ui_set = sets[scene_sets as usize + 1];
-
-            for (set, view, second) in [
-                (post_set, color.view, ui_target.view),
-                (ui_set, font_img.view, font_img.view),
-            ] {
-                let image_info = [vk::DescriptorImageInfo::default()
-                    .image_view(view)
-                    .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)];
-                let second_info = [vk::DescriptorImageInfo::default()
-                    .image_view(second)
-                    .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)];
-                let sampler_info = [vk::DescriptorImageInfo::default().sampler(sampler)];
-                d.update_descriptor_sets(
-                    &[
-                        vk::WriteDescriptorSet::default()
-                            .dst_set(set)
-                            .dst_binding(0)
-                            .descriptor_type(vk::DescriptorType::SAMPLED_IMAGE)
-                            .image_info(&image_info),
-                        vk::WriteDescriptorSet::default()
-                            .dst_set(set)
-                            .dst_binding(1)
-                            .descriptor_type(vk::DescriptorType::SAMPLER)
-                            .image_info(&sampler_info),
-                        vk::WriteDescriptorSet::default()
-                            .dst_set(set)
-                            .dst_binding(2)
-                            .descriptor_type(vk::DescriptorType::SAMPLED_IMAGE)
-                            .image_info(&second_info),
-                    ],
-                    &[],
-                );
-            }
-
-            let push = |stages, size: usize| {
-                [vk::PushConstantRange {
-                    stage_flags: stages,
-                    offset: 0,
-                    size: size as u32,
-                }]
-            };
-            let scene_push = push(
-                vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
-                size_of::<WorldPush>(),
-            );
-            let scene_layout = d.create_pipeline_layout(
-                &vk::PipelineLayoutCreateInfo::default()
-                    .set_layouts(&[scene_set_layout])
-                    .push_constant_ranges(&scene_push),
-                None,
-            )?;
-            let post_push = push(vk::ShaderStageFlags::FRAGMENT, size_of::<PostPush>());
-            let post_layout = d.create_pipeline_layout(
-                &vk::PipelineLayoutCreateInfo::default()
-                    .set_layouts(&[tex_set_layout])
-                    .push_constant_ranges(&post_push),
-                None,
-            )?;
-            let ui_push = push(vk::ShaderStageFlags::VERTEX, 16);
-            let ui_layout = d.create_pipeline_layout(
-                &vk::PipelineLayoutCreateInfo::default()
-                    .set_layouts(&[tex_set_layout])
-                    .push_constant_ranges(&ui_push),
-                None,
-            )?;
-
-            let Pipelines {
-                world: world_pipeline,
-                mesh: mesh_pipeline,
-                ghost: ghost_pipeline,
-                skin: skin_pipeline,
-                skin_ghost: skin_ghost_pipeline,
-                ui: ui_pipeline,
-                post: post_pipeline,
-            } = create_pipelines(
-                d,
-                scene_layout,
-                post_layout,
-                ui_layout,
-                swapchain.format,
-                world,
-            )?;
-
+            let desc = Descriptors::new(d)?;
+            let pipes = create_pipelines(d, &desc, swapchain.format, &setup)?;
             let (command_pool, frames) = present::create_frames(&ctx, FRAMES_IN_FLIGHT)?;
             let splash = Splash::new(&ctx, command_pool, swapchain.format, FRAMES_IN_FLIGHT)?;
             let timer = GpuTimer::new(&ctx, FRAMES_IN_FLIGHT)?;
-
-            // Font-Atlas hochladen
-            upload_r8(&ctx, command_pool, &font_img, font, 128, 128)?;
-            upload_r8(&ctx, command_pool, &sign_img, signs.0, signs.1, signs.2)?;
-
-            // Mesh-Vertices: alle Modelle hintereinander in einem Buffer
-            let mut all = Vec::new();
-            let mut mesh_ranges = Vec::new();
-            for m in meshes {
-                mesh_ranges.push((all.len() as u32, m.vertices.len() as u32));
-                all.extend_from_slice(&m.vertices);
-            }
-            let vbytes: &[u8] = bytemuck::cast_slice(&all);
-            let mesh_vertex_buf = Buffer::new_host(
-                &ctx,
-                vbytes.len().max(64) as u64,
-                vk::BufferUsageFlags::VERTEX_BUFFER,
-            )?;
-            mesh_vertex_buf.write(vbytes);
-
-            // Figuren-Vertices: alle Figuren hintereinander
-            let mut skin_all: Vec<crate::gpu::SkinVertex> = Vec::new();
-            let mut skin_ranges = Vec::new();
-            for s in skins {
-                skin_ranges.push((skin_all.len() as u32, s.vertices.len() as u32));
-                skin_all.extend_from_slice(&s.vertices);
-            }
-            let sbytes: &[u8] = bytemuck::cast_slice(&skin_all);
-            let skin_vertex_buf = Buffer::new_host(
-                &ctx,
-                sbytes.len().max(64) as u64,
-                vk::BufferUsageFlags::VERTEX_BUFFER,
-            )?;
-            skin_vertex_buf.write(sbytes);
-
-            let storage = vk::BufferUsageFlags::STORAGE_BUFFER;
-            let instance_buf = Buffer::new_host(&ctx, 64, storage)?;
-            let static_buf = Buffer::new_host(&ctx, 128, storage)?;
-            let light_buf = Buffer::new_host(&ctx, 64, storage)?;
-            let mut mesh_inst_bufs = Vec::new();
-            let mut bone_bufs = Vec::new();
-            let mut ui_bufs = Vec::new();
-            for _ in 0..FRAMES_IN_FLIGHT {
-                bone_bufs.push(Buffer::new_host(&ctx, (MAX_BONES * 64) as u64, storage)?);
-                mesh_inst_bufs.push(Buffer::new_host(
+            let font = r8_texture(&ctx, command_pool, cfg.font, FONT_MIPS)?;
+            let signs = r8_texture(&ctx, command_pool, cfg.signs.unwrap_or((&[0], 1, 1)), 1)?;
+            let (color_bit, depth_bit) = (vk::ImageAspectFlags::COLOR, vk::ImageAspectFlags::DEPTH);
+            let readable = [
+                (&shadow, depth_bit),
+                (&dummy_shadow, depth_bit),
+                (&second.color, color_bit),
+                (&ui_layer.image, color_bit),
+            ];
+            make_readable(&ctx, command_pool, &readable)?;
+            let renderer = Self {
+                inst_bufs: per_frame(&ctx, MAX_INSTANCES * size_of::<GpuInst>(), storage)?,
+                bone_bufs: per_frame(&ctx, MAX_BONES * 64, storage)?,
+                globals_bufs: per_frame(&ctx, size_of::<Globals>(), uniform)?,
+                second_globals: per_frame(&ctx, size_of::<Globals>(), uniform)?,
+                ui_bufs: per_frame(&ctx, MAX_UI_VERTS * size_of::<UiVertex>(), vertex)?,
+                particle_bufs: per_frame(
                     &ctx,
-                    (MAX_MESH_DRAWS * size_of::<GpuMeshInst>()) as u64,
-                    storage,
-                )?);
-                ui_bufs.push(Buffer::new_host(
-                    &ctx,
-                    (MAX_UI_VERTS * size_of::<UiVertex>()) as u64,
-                    vk::BufferUsageFlags::VERTEX_BUFFER,
-                )?);
-            }
-
-            let mut renderer = Self {
+                    START_PARTICLES * size_of::<ParticleInst>(),
+                    vertex,
+                )?,
+                box_buf: Buffer::new_host(&ctx, 64, storage)?,
+                light_buf: Buffer::new_host(&ctx, 64, storage)?,
+                static_buf: Buffer::new_host(&ctx, 128, storage)?,
+                box_count: 0,
+                light_count: 0,
+                static_groups: Vec::new(),
                 swapchain,
                 color,
                 depth,
-                font: font_img,
-                ui_target,
-                monitor,
-                monitor_depth,
-                sampler,
-                signs: sign_img,
-                sign_sampler,
-                scene_set_layout,
-                tex_set_layout,
-                descriptor_pool,
-                world_set,
-                world_set_cam,
-                mesh_sets,
-                static_set,
-                static_buf,
-                static_ranges: Vec::new(),
-                post_set,
-                ui_set,
-                scene_layout,
-                post_layout,
-                ui_layout,
-                world_pipeline,
-                mesh_pipeline,
-                ghost_pipeline,
-                skin_pipeline,
-                skin_ghost_pipeline,
-                skin_vertex_buf,
-                skin_ranges,
-                bone_bufs,
-                ui_pipeline,
-                post_pipeline,
+                ms_color,
+                samples,
+                wanted_samples: samples,
+                offscreen,
+                resolution: cfg.resolution,
+                ui_size: cfg.ui,
+                second,
+                ui_layer,
+                shadow,
+                dummy_shadow,
+                font,
+                signs,
+                smooth: cfg.smooth,
+                font_mipmaps: false,
+                desc,
+                setup,
+                pipes,
                 command_pool,
                 frames,
                 frame_index: 0,
-                instance_buf,
-                light_buf,
-                instance_count: 0,
-                light_count: 0,
                 mesh_vertex_buf,
                 mesh_ranges,
-                mesh_inst_bufs,
-                ui_bufs,
-                window_size: (size.width, size.height),
-                needs_recreate: false,
-                capture: Capture::default(),
-                timer,
-                splash,
-                stats: FrameStats::default(),
-                mesh_bounds: meshes
+                skin_vertex_buf,
+                skin_ranges,
+                particles: Vec::new(),
+                mesh_bounds: cfg
+                    .meshes
                     .iter()
                     .map(|m| Sphere::of_mesh(&m.vertices))
                     .collect(),
-                skin_bounds: skins.iter().map(|s| SkinBounds::new(&s.vertices)).collect(),
-                visible: Vec::new(),
+                skin_bounds: cfg
+                    .skins
+                    .iter()
+                    .map(|s| SkinBounds::new(&s.vertices))
+                    .collect(),
+                culling: true,
+                lists: DrawLists::default(),
+                timer,
+                splash,
+                stats: FrameStats::default(),
+                scratch_insts: Vec::with_capacity(1024),
+                scratch_bones: Vec::with_capacity(1024),
+                window_size,
+                needs_recreate: false,
+                capture: Capture::default(),
                 ctx,
             };
-            renderer.write_scene_descriptors();
+            for fi in 0..FRAMES_IN_FLIGHT {
+                renderer.write_scene_descriptors(fi);
+            }
+            renderer.write_tex_descriptors();
             Ok(renderer)
         }
+    }
+
+    /// Zielbilder der Szene: Farbe, Tiefe und (mit Kantenglaettung) mehrfach abgetastete Farbe.
+    pub(super) fn make_targets(
+        ctx: &Context,
+        ext: vk::Extent2D,
+        samples: vk::SampleCountFlags,
+    ) -> Result<(Image, Image, Option<Image>)> {
+        let color = color_target(ctx, ext)?;
+        if samples == vk::SampleCountFlags::TYPE_1 {
+            return Ok((color, depth_target(ctx, ext, false)?, None));
+        }
+        let make = |format, usage, aspect| {
+            Image::with(
+                ctx,
+                &ImageDesc {
+                    width: ext.width,
+                    height: ext.height,
+                    format,
+                    usage,
+                    aspect,
+                    samples,
+                    mips: 1,
+                },
+            )
+        };
+        let depth = make(
+            DEPTH_FORMAT,
+            vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
+            vk::ImageAspectFlags::DEPTH,
+        )?;
+        let ms = make(
+            COLOR_FORMAT,
+            vk::ImageUsageFlags::COLOR_ATTACHMENT,
+            vk::ImageAspectFlags::COLOR,
+        )?;
+        Ok((color, depth, Some(ms)))
     }
 }

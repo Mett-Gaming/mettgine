@@ -1,7 +1,18 @@
-//! Vulkan-Renderer.
+//! Der Renderer der Mettgine. Es gibt genau diesen einen: Neue Faehigkeiten kommen hier dazu
+//! und stehen damit allen Spielen offen.
 //!
-//! Pass 1 (480x270 Offscreen): statische Welt-Boxen, Meshes (Modelle + dynamische Boxen), UI.
-//! Pass 2 (Swapchain): VHS-Post-Pass. Dynamic Rendering (Vulkan 1.3).
+//! Ablauf pro Bild (Vulkan 1.3, Dynamic Rendering), nicht Gebrauchtes faellt weg:
+//! 1. Schattenkarte aus Sicht der Sonne
+//! 2. zweite Kamera (Monitor, Spiegel) in ein eigenes kleines Bild
+//! 3. Szene in ein Offscreen-Bild: Himmel, Welt-Boxen, feste und bewegliche Modelle, Figuren,
+//!    Hologramme, Partikel
+//! 4. UI-Ebene (nur bei festem UI-Raster mit Videoband)
+//! 5. Nachbearbeitung aufs Fenster, UI obendrauf
+//!
+//! Dateien: `params` (Eingaben), `init`/`descriptors`/`pipelines` (Aufbau), `world` (selten
+//! geaenderte Daten), `lists` (was ist zu sehen), `draw` (ein Bild vorbereiten),
+//! `frame`/`screen` (aufnehmen), `quality` (Zuschaltbares). Darunter die Vulkan-Grundlagen.
+//! Shader: `shaders/`, Schnittstelle in `_common.wgsl` und `descriptors`.
 
 pub(crate) mod context;
 pub(crate) mod pipeline;
@@ -11,226 +22,218 @@ pub(crate) mod timing;
 pub(crate) mod transfer;
 pub(crate) mod util;
 
-use crate::cull::{Frustum, SkinBounds, Sphere};
-use crate::gpu::{GpuInstance, GpuLight, MeshData};
+mod descriptors;
+mod draw;
+mod frame;
+mod init;
+mod lists;
+mod params;
+mod pipelines;
+mod quality;
+mod screen;
+#[cfg(test)]
+mod tests;
+mod world;
+
+pub use params::*;
+pub use pipelines::WorldShaders;
+
+use crate::cull::{SkinBounds, Sphere};
+use crate::particles::ParticleInst;
 use crate::profile::FrameStats;
 use crate::splash::Splash;
 use ash::vk;
 use bytemuck::{Pod, Zeroable};
 use context::Context;
-use glam::{Mat4, Vec3, Vec4};
-use pipeline::{create_pipeline, Blend, PipelineDesc};
+use descriptors::Descriptors;
+use glam::Mat4;
+use lists::DrawLists;
+use pipelines::{Pipelines, SceneSetup};
 use present::{Capture, Frame};
-use std::mem::size_of;
 use swapchain::Swapchain;
 use timing::GpuTimer;
-use transfer::{set_viewport, upload_r8};
-use util::{image_barrier, Buffer, Image};
-use winit::window::Window;
+use util::{Buffer, Image};
 
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
-pub const RENDER_WIDTH: u32 = 480;
-pub const RENDER_HEIGHT: u32 = 270;
 const COLOR_FORMAT: vk::Format = vk::Format::R8G8B8A8_UNORM;
 const DEPTH_FORMAT: vk::Format = vk::Format::D32_SFLOAT;
 const FRAMES_IN_FLIGHT: usize = 2;
-const MAX_MESH_DRAWS: usize = 4096;
-const MAX_UI_VERTS: usize = 60_000;
-/// Knochen-Matrizen pro Frame (animierte Figuren)
-const MAX_BONES: usize = 16_384;
-/// Aufloesung des Ueberwachungsmonitors (zweite Kamera)
-pub const MONITOR_WIDTH: u32 = 160;
-pub const MONITOR_HEIGHT: u32 = 90;
+/// Modell- plus Figuren-Instanzen, fuer die am Anfang Platz ist (waechst bei Bedarf)
+pub const MAX_INSTANCES: usize = 8192;
+/// UI-Vertices, fuer die am Anfang Platz ist (waechst bei Bedarf)
+pub const MAX_UI_VERTS: usize = 120_000;
+/// Knochen-Matrizen (alle Figuren zusammen), fuer die am Anfang Platz ist (waechst bei Bedarf)
+pub const MAX_BONES: usize = 8192;
+/// Feste Obergrenzen pro Bild; was darueber liegt, fehlt und zaehlt in `FrameStats::dropped`
+const HARD_INSTANCES: usize = 131_072;
+const HARD_UI_VERTS: usize = 1_200_000;
+const HARD_BONES: usize = 131_072;
+const HARD_PARTICLES: usize = 131_072;
+/// Partikel, fuer die am Anfang Platz ist
+const START_PARTICLES: usize = 1024;
+/// Kantenlaenge der Schattenkarte (Texel)
+pub const SHADOW_SIZE: u32 = 2048;
+/// Uebliche virtuelle UI-Hoehe; die Breite folgt dem Seitenverhaeltnis des Fensters
+pub const UI_HEIGHT: f32 = 720.0;
 
-macro_rules! spv {
-    ($name:literal) => {
-        include_bytes!(concat!(env!("OUT_DIR"), "/", $name, ".spv"))
-    };
-}
-
-// Teile des Renderers (nach dem spv!-Makro, das sie benutzen)
-mod draw;
-mod frame;
-mod init;
-mod monitor_pass;
-mod pipelines;
-mod post_pass;
-mod upload;
-
-pub use pipelines::WorldShaders;
-
-#[repr(C)]
-#[derive(Clone, Copy, Pod, Zeroable)]
-struct WorldPush {
-    view_proj: [[f32; 4]; 4],
-    cam_pos: [f32; 4],
-    params: [f32; 4],
-    fog_color: [f32; 4],
-    /// Live-Verbiegen: seitlich, hoch, Gangbeginn z, Gangende z
-    sway: [f32; 4],
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, Pod, Zeroable)]
-struct PostPush {
-    params: [f32; 4],
-    res: [f32; 4],
-    extra: [f32; 4],
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, Pod, Zeroable)]
-struct GpuMeshInst {
-    model: [[f32; 4]; 4],
-    tint: [f32; 4],
-    extra: [f32; 4],
-}
-
+/// Ein Eckpunkt der Oberflaeche.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Pod, Zeroable)]
 pub struct UiVertex {
     pub pos: [f32; 2],
+    /// Stelle im Schrift-Atlas; x < 0 = einfarbig
     pub uv: [f32; 2],
     pub color: [f32; 4],
 }
 
-/// Ein Modell (oder eine dynamische Box) fuer diesen Frame.
-#[derive(Clone, Copy)]
-pub struct MeshDraw {
-    pub mesh: usize,
-    pub model: Mat4,
-    /// rgb = Farbe (multipliziert), a = Eigenleuchten
-    pub tint: Vec4,
+/// Szenen-Daten als Uniform (binding 2), gleich aufgebaut wie `Globals` in `_common.wgsl`.
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct Globals {
+    view_proj: [[f32; 4]; 4],
+    light_vp: [[f32; 4]; 4],
+    inv_view_proj: [[f32; 4]; 4],
+    cam_pos: [f32; 4],
+    sun_dir: [f32; 4],
+    sun_color: [f32; 4],
+    sky_top: [f32; 4],
+    horizon: [f32; 4],
+    ground: [f32; 4],
+    params: [f32; 4],
+    sway: [f32; 4],
+    extra: [f32; 4],
 }
 
-/// Eine animierte Figur: Mesh `skin` (Index in den Figuren), Knochen ab `first_bone` im Knochen-Puffer.
-#[derive(Clone, Copy, Debug)]
-pub struct SkinDraw {
-    pub skin: usize,
-    pub model: Mat4,
-    /// rgb = Farbmultiplikator, w = Eigenleuchten
-    pub tint: Vec4,
-    pub first_bone: u32,
-    /// halbtransparent (Hologramm)
-    pub ghost: bool,
-    /// Zerreissen im Shader (0..1)
-    pub distort: f32,
+/// Eine Instanz (binding 0), gleich aufgebaut wie `Inst` in `_common.wgsl`.
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct GpuInst {
+    model: [[f32; 4]; 4],
+    tint: [f32; 4],
+    /// x = erster Knochen (Figuren), y = Blinken, z = Zerreissen, w = 1 schwankt mit
+    extra: [f32; 4],
 }
 
-pub struct FrameParams {
-    pub view_proj: Mat4,
-    pub cam_pos: Vec3,
-    pub time: f32,
-    pub tipped: bool,
-    pub fog_color: Vec3,
-    pub fog_density: f32,
-    pub glitch: f32,
-    pub vhs: f32,
-    pub fade: f32,
-    pub red: f32,
-    /// Verfall der Werbeposter (0..1)
-    pub decay: f32,
-    /// Live-Verbiegen der Gaenge (siehe world::sway)
-    pub sway: Vec4,
-    /// Farbumkehr (0..1) und Ueberbelichtung (0..1) beim Schreck
-    pub invert: f32,
-    pub flash: f32,
-    /// Kamera des Ueberwachungsmonitors (view_proj, Position); None = Bild bleibt schwarz
-    pub monitor: Option<(Mat4, Vec3)>,
+impl GpuInst {
+    fn mesh(m: &MeshDraw, sways: bool) -> Self {
+        Self {
+            model: m.model.to_cols_array_2d(),
+            tint: m.tint.to_array(),
+            extra: [0.0, m.blink, 0.0, sways as u8 as f32],
+        }
+    }
+
+    fn skin(s: &SkinDraw) -> Self {
+        Self {
+            model: s.model.to_cols_array_2d(),
+            tint: s.tint.to_array(),
+            extra: [s.first_bone as f32, s.blink, s.distort, 0.0],
+        }
+    }
 }
 
-pub struct Renderer {
-    swapchain: Swapchain,
+/// Zusammenhaengende Instanzen eines Modells (ein instanzierter Draw-Call).
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Group {
+    mesh: u32,
+    first_inst: u32,
+    count: u32,
+}
+
+/// Bild der zweiten Kamera (ohne Kamera: 1x1-Platzhalter).
+struct SecondCamera {
     color: Image,
     depth: Image,
+    extent: vk::Extent2D,
+    enabled: bool,
+}
+
+/// Eigene UI-Ebene (ohne festes Raster: 1x1-Platzhalter).
+struct UiLayer {
+    image: Image,
+    extent: vk::Extent2D,
+    enabled: bool,
+}
+
+/// Der Renderer. Aufbau mit [`Renderer::new`], ein Bild mit [`Renderer::draw`].
+pub struct Renderer {
+    swapchain: Swapchain,
+    /// Offscreen-Ziel der Szene und seine Tiefe
+    color: Image,
+    depth: Image,
+    /// mehrfach abgetastete Farbe, nur mit Kantenglaettung (wird nach `color` aufgeloest)
+    ms_color: Option<Image>,
+    samples: vk::SampleCountFlags,
+    wanted_samples: vk::SampleCountFlags,
+    offscreen: vk::Extent2D,
+    resolution: Resolution,
+    ui_size: UiSize,
+    second: SecondCamera,
+    ui_layer: UiLayer,
+    shadow: Image,
+    /// 1x1-Tiefe als Platzhalter an binding 3 im Schatten-Pass (dort wird die echte Karte beschrieben)
+    dummy_shadow: Image,
     font: Image,
-    ui_target: Image,
-    /// Bild der Ueberwachungskamera und seine Tiefe
-    monitor: Image,
-    monitor_depth: Image,
-    sampler: vk::Sampler,
-    /// Schild-Atlas (Schriftzuege im Markt), linear gefiltert
     signs: Image,
-    sign_sampler: vk::Sampler,
-    scene_set_layout: vk::DescriptorSetLayout,
-    tex_set_layout: vk::DescriptorSetLayout,
-    descriptor_pool: vk::DescriptorPool,
-    world_set: vk::DescriptorSet,
-    /// wie world_set, aber ohne Monitor-Bild (fuer den Kamera-Pass, der es gerade beschreibt)
-    world_set_cam: vk::DescriptorSet,
-    mesh_sets: Vec<vk::DescriptorSet>,
-    /// statische Mesh-Instanzen (Waren in den Regalen), nach Modell sortiert
-    static_set: vk::DescriptorSet,
-    static_buf: Buffer,
-    static_ranges: Vec<(u32, u32, u32)>,
-    post_set: vk::DescriptorSet,
-    ui_set: vk::DescriptorSet,
-    scene_layout: vk::PipelineLayout,
-    post_layout: vk::PipelineLayout,
-    ui_layout: vk::PipelineLayout,
-    world_pipeline: vk::Pipeline,
-    mesh_pipeline: vk::Pipeline,
-    ghost_pipeline: vk::Pipeline,
-    skin_pipeline: vk::Pipeline,
-    skin_ghost_pipeline: vk::Pipeline,
-    skin_vertex_buf: Buffer,
-    skin_ranges: Vec<(u32, u32)>,
-    /// Knochen-Matrizen je Frame im Flug
-    bone_bufs: Vec<Buffer>,
-    ui_pipeline: vk::Pipeline,
-    post_pipeline: vk::Pipeline,
+    smooth: bool,
+    font_mipmaps: bool,
+    desc: Descriptors,
+    setup: SceneSetup,
+    pipes: Pipelines,
     command_pool: vk::CommandPool,
     frames: Vec<Frame>,
     frame_index: usize,
-    instance_buf: Buffer,
-    light_buf: Buffer,
-    instance_count: u32,
-    light_count: u32,
     mesh_vertex_buf: Buffer,
     mesh_ranges: Vec<(u32, u32)>,
-    mesh_inst_bufs: Vec<Buffer>,
+    skin_vertex_buf: Buffer,
+    skin_ranges: Vec<(u32, u32)>,
+    /// selten geaendert: Welt-Boxen, Lampen, feste Modelle
+    box_buf: Buffer,
+    box_count: u32,
+    light_buf: Buffer,
+    light_count: u32,
+    static_buf: Buffer,
+    static_groups: Vec<Group>,
+    inst_bufs: Vec<Buffer>,
+    bone_bufs: Vec<Buffer>,
+    globals_bufs: Vec<Buffer>,
+    second_globals: Vec<Buffer>,
     ui_bufs: Vec<Buffer>,
-    window_size: (u32, u32),
-    needs_recreate: bool,
-    capture: Capture,
+    particle_bufs: Vec<Buffer>,
+    particles: Vec<ParticleInst>,
+    mesh_bounds: Vec<Sphere>,
+    skin_bounds: Vec<SkinBounds>,
+    culling: bool,
+    lists: DrawLists,
     timer: GpuTimer,
     splash: Splash,
     stats: FrameStats,
-    mesh_bounds: Vec<Sphere>,
-    skin_bounds: Vec<SkinBounds>,
-    /// im Kamerabild: Modelle, dann Hologramme, dann feste und halbtransparente Figuren
-    visible: Vec<bool>,
+    /// wiederverwendete Puffer fuer den Bild-Takt
+    scratch_insts: Vec<GpuInst>,
+    scratch_bones: Vec<[[f32; 4]; 4]>,
+    window_size: (u32, u32),
+    needs_recreate: bool,
+    capture: Capture,
     // Muss zuletzt freigegeben werden (Drop-Reihenfolge der Felder).
     ctx: Context,
 }
 
-fn binding(
-    b: u32,
-    ty: vk::DescriptorType,
-    stages: vk::ShaderStageFlags,
-) -> vk::DescriptorSetLayoutBinding<'static> {
-    vk::DescriptorSetLayoutBinding::default()
-        .binding(b)
-        .descriptor_type(ty)
-        .descriptor_count(1)
-        .stage_flags(stages)
+fn offscreen_extent(window: (u32, u32), r: Resolution) -> vk::Extent2D {
+    let (width, height) = match r {
+        Resolution::Fixed(w, h) => (w, h),
+        Resolution::Scale(s) => (
+            (window.0 as f32 * s.clamp(0.25, 2.0)) as u32,
+            (window.1 as f32 * s.clamp(0.25, 2.0)) as u32,
+        ),
+    };
+    vk::Extent2D {
+        width: width.max(16),
+        height: height.max(16),
+    }
 }
 
 impl Renderer {
-    /// `font` ist ein 128x128-Graustufen-Atlas (16x16 Zeichen a 8x8 Pixel).
-    /// `signs` = (R8-Pixel, Breite, Hoehe) des Schild-Atlas.
-    pub fn new(
-        window: &Window,
-        meshes: &[MeshData],
-        skins: &[crate::gpu::SkinData],
-        font: &[u8],
-        signs: (&[u8], u32, u32),
-    ) -> Result<Self> {
-        let world = WorldShaders::default();
-        Self::with_world_shaders(window, meshes, skins, font, signs, &world)
-    }
-
     /// Name der Grafikkarte samt Treiber.
     pub fn gpu_name(&self) -> &str {
         &self.ctx.gpu_name
@@ -241,69 +244,95 @@ impl Renderer {
         self.splash.active()
     }
 
-    /// Speichert das naechste fertige Bild (nach VHS-Pass) als BMP.
+    /// Speichert das naechste fertige Bild als BMP.
     pub fn capture_next(&mut self, path: std::path::PathBuf) {
         self.capture.request(path);
     }
 
-    /// Messwerte des letzten Bildes (Auswertung: `profile::Meter`).
-    pub fn stats(&self) -> FrameStats {
-        self.stats
-    }
-
+    /// Fenstergroesse hat sich geaendert (Pixel).
     pub fn resize(&mut self, width: u32, height: u32) {
         self.window_size = (width, height);
         self.needs_recreate = true;
+    }
+
+    /// Aufloesung der Szene relativ zum Fenster (0.25..2).
+    pub fn set_render_scale(&mut self, scale: f32) {
+        let new = Resolution::Scale(scale.clamp(0.25, 2.0));
+        if new != self.resolution {
+            self.resolution = new;
+            self.needs_recreate = true;
+        }
+    }
+
+    /// Virtuelle UI-Flaeche (Breite, Hoehe), siehe [`UiSize`].
+    pub fn ui_area(&self) -> (f32, f32) {
+        match self.ui_size {
+            UiSize::Height(h) => (h * self.aspect(), h),
+            UiSize::Fixed(w, h) => (w as f32, h as f32),
+        }
+    }
+
+    /// Breite der virtuellen UI-Flaeche.
+    pub fn ui_width(&self) -> f32 {
+        self.ui_area().0
+    }
+
+    /// Seitenverhaeltnis des Fensters (Breite / Hoehe).
+    pub fn aspect(&self) -> f32 {
+        let (w, h) = self.window_size;
+        w.max(1) as f32 / h.max(1) as f32
     }
 }
 
 impl Drop for Renderer {
     fn drop(&mut self) {
+        // SAFETY: Warten auf das Geraet, danach nutzt die GPU keine der Ressourcen mehr;
+        // jede wird hier genau einmal freigegeben.
         unsafe {
             let d = &self.ctx.device;
             let _ = d.device_wait_idle();
             present::destroy_frames(d, &self.frames);
             d.destroy_command_pool(self.command_pool, None);
-            self.instance_buf.destroy(d);
-            self.static_buf.destroy(d);
-            self.light_buf.destroy(d);
-            self.mesh_vertex_buf.destroy(d);
-            self.skin_vertex_buf.destroy(d);
-            for b in &self.bone_bufs {
+            let single = [
+                &self.mesh_vertex_buf,
+                &self.skin_vertex_buf,
+                &self.box_buf,
+                &self.light_buf,
+                &self.static_buf,
+            ];
+            for b in self
+                .inst_bufs
+                .iter()
+                .chain(&self.bone_bufs)
+                .chain(&self.globals_bufs)
+                .chain(&self.second_globals)
+                .chain(&self.ui_bufs)
+                .chain(&self.particle_bufs)
+                .chain(single)
+            {
                 b.destroy(d);
             }
             self.capture.destroy(d);
             self.timer.destroy(d);
             self.splash.destroy(d);
-            for b in self.mesh_inst_bufs.iter().chain(self.ui_bufs.iter()) {
-                b.destroy(d);
+            self.pipes.destroy(d);
+            self.desc.destroy(d);
+            for i in [
+                &self.color,
+                &self.depth,
+                &self.second.color,
+                &self.second.depth,
+                &self.ui_layer.image,
+                &self.shadow,
+                &self.dummy_shadow,
+                &self.font,
+                &self.signs,
+            ]
+            .into_iter()
+            .chain(&self.ms_color)
+            {
+                i.destroy(d);
             }
-            for p in [
-                self.world_pipeline,
-                self.mesh_pipeline,
-                self.ghost_pipeline,
-                self.skin_pipeline,
-                self.skin_ghost_pipeline,
-                self.ui_pipeline,
-                self.post_pipeline,
-            ] {
-                d.destroy_pipeline(p, None);
-            }
-            for l in [self.scene_layout, self.post_layout, self.ui_layout] {
-                d.destroy_pipeline_layout(l, None);
-            }
-            d.destroy_descriptor_pool(self.descriptor_pool, None);
-            d.destroy_descriptor_set_layout(self.scene_set_layout, None);
-            d.destroy_descriptor_set_layout(self.tex_set_layout, None);
-            d.destroy_sampler(self.sampler, None);
-            d.destroy_sampler(self.sign_sampler, None);
-            self.signs.destroy(d);
-            self.color.destroy(d);
-            self.depth.destroy(d);
-            self.font.destroy(d);
-            self.ui_target.destroy(d);
-            self.monitor.destroy(d);
-            self.monitor_depth.destroy(d);
             self.swapchain.destroy(&self.ctx);
         }
     }

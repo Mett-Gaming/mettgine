@@ -177,7 +177,7 @@ impl Frustum {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::scene::perspective;
+    use crate::render::perspective;
 
     fn cam() -> Frustum {
         let view = Mat4::look_at_rh(Vec3::ZERO, Vec3::Z, Vec3::Y);

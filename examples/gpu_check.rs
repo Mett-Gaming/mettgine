@@ -1,4 +1,4 @@
-//! Prueft den Szenen-Renderer auf einer echten Grafikkarte, ohne Spieldaten und ohne sichtbares
+//! Prueft den Renderer auf einer echten Grafikkarte, ohne Spieldaten und ohne sichtbares
 //! Fenster: zeichnet kleine Testszenen und vergleicht die Bildpunkte selbst.
 //!
 //! Aufruf: `cargo run --release --example gpu_check [ordner]` (Ende mit Fehler, wenn etwas nicht stimmt).
@@ -6,7 +6,10 @@
 use glam::{Mat4, Vec3, Vec4};
 use mettgine::gpu::{MeshData, MeshVertex, SkinData, SkinVertex};
 use mettgine::particles::ParticleInst;
-use mettgine::scene::{perspective, MeshDraw, SceneParams, SceneRenderer, SkinDraw, UiVertex};
+use mettgine::render::{
+    perspective, Clean, Config, FrameInput, Lighting, MeshDraw, Post, Renderer, SkinDraw, Sun,
+    UiVertex, View,
+};
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, EventLoop};
@@ -42,25 +45,38 @@ fn cube(h: f32) -> MeshData {
     }
 }
 
-fn params() -> SceneParams {
-    let cam_pos = Vec3::new(0.0, 4.0, -10.0);
-    let view = Mat4::look_at_rh(cam_pos, Vec3::new(0.3, 0.5, 4.0), Vec3::Y);
-    SceneParams {
-        view_proj: perspective(1.1, W as f32 / H as f32, 0.1, 200.0) * view,
-        cam_pos,
+fn input(s: &Shot) -> FrameInput<'_> {
+    let pos = Vec3::new(0.0, 4.0, -10.0);
+    let view = Mat4::look_at_rh(pos, Vec3::new(0.3, 0.5, 4.0), Vec3::Y);
+    FrameInput {
+        view: View {
+            view_proj: perspective(1.1, W as f32 / H as f32, 0.1, 200.0) * view,
+            pos,
+        },
+        second_camera: None,
         time: 1.0,
-        sun_dir: Vec3::new(0.4, 1.0, -0.3),
-        sun_color: Vec3::new(1.0, 0.95, 0.8),
-        shadow_center: Vec3::new(0.0, 0.0, 5.0),
-        shadow_radius: 20.0,
-        shadow_strength: 0.8,
-        sky_top: Vec3::new(0.3, 0.5, 0.9),
-        horizon: Vec3::new(0.7, 0.8, 0.9),
-        fog_density: 0.005,
-        ground: Vec3::new(0.2, 0.2, 0.2),
-        fade: 0.0,
-        red: 0.0,
-        saturation: 1.0,
+        lighting: Lighting::Sun(Sun {
+            dir: Vec3::new(0.4, 1.0, -0.3),
+            color: Vec3::new(1.0, 0.95, 0.8),
+            shadow_center: Vec3::new(0.0, 0.0, 5.0),
+            shadow_radius: 20.0,
+            shadow_strength: 0.8,
+            sky_top: Vec3::new(0.3, 0.5, 0.9),
+            horizon: Vec3::new(0.7, 0.8, 0.9),
+            fog_density: 0.005,
+            ground: Vec3::new(0.2, 0.2, 0.2),
+        }),
+        post: Post::Clean(Clean {
+            fade: 0.0,
+            red: 0.0,
+            saturation: 1.0,
+        }),
+        meshes: &s.meshes,
+        ghosts: &[],
+        skins: &s.skins,
+        camera_skins: &[],
+        bones: &s.bones,
+        ui: &s.ui,
     }
 }
 
@@ -95,15 +111,14 @@ impl Shot {
             skin: 0,
             model: Mat4::from_translation(Vec3::new(-3.0, 0.5, -1.0)),
             tint: Vec4::new(0.2, 1.0, 0.3, 0.2),
-            first_bone: 0,
-            blink: 0.0,
+            ..Default::default()
         });
         s
     }
 }
 
 struct Check {
-    renderer: SceneRenderer,
+    renderer: Renderer,
     path: std::path::PathBuf,
     count: usize,
 }
@@ -112,7 +127,7 @@ impl Check {
     fn draw(&mut self, s: &Shot) -> Result<(), String> {
         self.renderer.queue_particles(&s.particles);
         self.renderer
-            .draw(&params(), &s.meshes, &s.skins, &s.bones, &s.ui)
+            .draw(&input(s))
             .map_err(|e| format!("Zeichnen: {e}"))
     }
 
@@ -351,7 +366,7 @@ impl App {
             .map(|i| ((i % n + i / n) % 2 * 255) as u8)
             .collect();
         let meshes = [cube(1.0), cube(0.8)];
-        let renderer = SceneRenderer::new(&window, &meshes, &[skin], (&font, n, n), 1.0)
+        let renderer = Renderer::new(&window, &Config::new(&meshes, &[skin], (&font, n, n)))
             .map_err(|e| format!("Renderer: {e}"))?;
         println!("{}", renderer.gpu_name());
         let path =

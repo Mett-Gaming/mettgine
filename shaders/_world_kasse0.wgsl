@@ -85,7 +85,7 @@ fn sign_face(in: VsOut) -> vec3<f32> {
     let n = vec3<f32>(in.normal.x * c - in.normal.z * s, in.normal.y, in.normal.x * s + in.normal.z * c);
     let h = in.half_ext;
     var bg = in.color.rgb;
-    let decay = clamp(pc.fog_color.w, 0.0, 1.0);
+    let decay = clamp(g.extra.x, 0.0, 1.0);
     // Flecken im Verfall
     let stain = hash11(floor(l.x * 9.0 + l.z * 9.0) * 3.7 + floor(l.y * 11.0) * 1.3 + in.extra.y);
     bg = bg * (1.0 - decay * 0.45 * step(0.65, stain));
@@ -106,11 +106,11 @@ fn sign_face(in: VsOut) -> vec3<f32> {
     let dims = vec2<f32>(textureDimensions(sign_tex));
     let px = dims.x * 0.5 + (u - 0.5) * aspect * 32.0;
     let py = (in.extra.y + 1.0 - v) * 32.0;
-    var cov = textureSampleLevel(sign_tex, sign_samp, vec2<f32>(px, py) / dims, 0.0).r;
+    var cov = textureSampleLevel(sign_tex, linear_samp, vec2<f32>(px, py) / dims, 0.0).r;
     cov = select(cov, 0.0, px < 0.0 || px > dims.x);
     // Im Verfall fallen einzelne Buchstaben aus und flackern
     let letter = floor(px / 13.0);
-    let t = floor(pc.params.x * 2.0);
+    let t = floor(g.cam_pos.w * 2.0);
     if (decay > 0.3 && hash11(letter * 1.7 + in.extra.y * 5.3 + t * 0.37) < (decay - 0.3) * 0.5) {
         cov = cov * 0.1;
     }
@@ -121,7 +121,7 @@ fn sign_face(in: VsOut) -> vec3<f32> {
 // Bildschirm des Ueberwachungsmonitors. In der Kamera selbst bleibt er dunkel.
 fn monitor_face(in: VsOut) -> vec3<f32> {
     let dark = vec3<f32>(0.03, 0.035, 0.03);
-    if (pc.cam_pos.w > 1.5) {
+    if (g.params.w > 0.5) {
         return dark;
     }
     let c = cos(in.yaw);
@@ -135,12 +135,12 @@ fn monitor_face(in: VsOut) -> vec3<f32> {
     let h = in.half_ext;
     let u = 0.5 - l.x / (2.0 * h.x);
     let v = 0.5 - l.y / (2.0 * h.y);
-    let t = pc.params.x;
+    let t = g.cam_pos.w;
     // Bildzittern und laufender Stoerbalken
     let roll = fract(t * 0.13);
     let bar = 1.0 - smoothstep(0.0, 0.05, abs(v - roll)) * 0.5;
     let jitter = (hash11(floor(v * 90.0) + floor(t * 12.0)) - 0.5) * 0.004;
-    let src = textureSampleLevel(monitor_tex, sign_samp, vec2<f32>(clamp(u + jitter, 0.0, 1.0), clamp(v, 0.0, 1.0)), 0.0).rgb;
+    let src = textureSampleLevel(camera_tex, linear_samp, vec2<f32>(clamp(u + jitter, 0.0, 1.0), clamp(v, 0.0, 1.0)), 0.0).rgb;
     let lum = dot(src, vec3<f32>(0.3, 0.55, 0.15));
     var col = vec3<f32>(lum) * vec3<f32>(0.85, 1.0, 0.9) * 1.6 + vec3<f32>(0.03);
     col = col * (0.82 + 0.18 * sin(v * 3.14159 * 90.0)) * bar;
@@ -154,7 +154,7 @@ fn monitor_face(in: VsOut) -> vec3<f32> {
 // seitenverkehrt, in Farbe, alt und fleckig. In der Kamera selbst bleibt er dunkel.
 fn mirror_face(in: VsOut) -> vec3<f32> {
     let dark = vec3<f32>(0.05, 0.05, 0.055);
-    if (pc.cam_pos.w > 1.5) {
+    if (g.params.w > 0.5) {
         return dark;
     }
     let c = cos(in.yaw);
@@ -168,10 +168,10 @@ fn mirror_face(in: VsOut) -> vec3<f32> {
     let h = in.half_ext;
     let u = 0.5 - l.x / (2.0 * h.x);
     let v = 0.5 - l.y / (2.0 * h.y);
-    let t = pc.params.x;
+    let t = g.cam_pos.w;
     // ganz leichtes Wabern, als ob das Glas nicht ganz eben waere
     let wob = sin(v * 23.0 + t * 1.3) * 0.002;
-    let src = textureSampleLevel(monitor_tex, sign_samp, vec2<f32>(clamp(1.0 - u + wob, 0.0, 1.0), clamp(v, 0.0, 1.0)), 0.0).rgb;
+    let src = textureSampleLevel(camera_tex, linear_samp, vec2<f32>(clamp(1.0 - u + wob, 0.0, 1.0), clamp(v, 0.0, 1.0)), 0.0).rgb;
     var col = src * vec3<f32>(0.92, 0.95, 0.97) * 1.15;
     // blinde Flecken und Kratzer im Silber
     let blot = hash11(floor(u * 24.0) * 3.1 + floor(v * 14.0) * 17.3);

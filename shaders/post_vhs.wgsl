@@ -1,4 +1,4 @@
-// VHS-Post-Pass: skaliert das 480x270-Bild hoch und legt Bandeffekte darueber.
+// VHS-Post-Pass: skaliert das Szenenbild hoch und legt Bandeffekte darueber.
 
 struct Push {
     params: vec4<f32>, // x = Zeit, y = Glitch (0..1), z = gekippt, w = VHS-Staerke (Option)

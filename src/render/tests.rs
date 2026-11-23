@@ -1,4 +1,4 @@
-//! Tests des Szenen-Renderers ohne GPU: Gruppierung der Instanzen, Sonnen-Kamera, Projektion.
+//! Tests des Renderers ohne GPU: Gruppierung der Instanzen, Sonnen-Kamera, Projektion.
 
 use super::lists::build_groups;
 use super::*;
@@ -109,6 +109,7 @@ fn hidden_draws_leave_both_passes_contiguous() {
     let vis = |m: &MeshDraw| Visible {
         camera: m.model.w_axis.x > 0.5,
         shadow: m.model.w_axis.y > 0.5,
+        second: false,
     };
     for _ in 0..2 {
         l.build_meshes(&draws, 2, 100, vis); // zweimal: Listen werden wiederverwendet
@@ -133,4 +134,73 @@ fn msaa_falls_back_to_what_the_card_supports() {
     assert_eq!(clamp_samples(8, card), S::TYPE_4);
     assert_eq!(clamp_samples(3, card), S::TYPE_2);
     assert_eq!(clamp_samples(0, card), S::TYPE_1);
+}
+
+#[test]
+fn second_camera_and_ghosts_get_their_own_lists() {
+    use super::lists::{DrawLists, SkinKind, Visible};
+    let mut l = DrawLists::default();
+    // x = Kamera, y = zweite Kamera
+    let at = |c: bool, s: bool| {
+        MeshDraw::new(
+            0,
+            Mat4::from_translation(Vec3::new(c as u8 as f32, s as u8 as f32, 0.0)),
+        )
+    };
+    let vis = |m: &MeshDraw| Visible {
+        camera: m.model.w_axis.x > 0.5,
+        shadow: false,
+        second: m.model.w_axis.y > 0.5,
+    };
+    let draws = [at(false, true), at(true, true), at(true, false)];
+    l.build_meshes(&draws, 1, 100, vis);
+    let order: Vec<u32> = l.order.iter().map(|o| o.1).collect();
+    assert_eq!(order, [2, 1, 0]);
+    let g = |first_inst, count| Group {
+        mesh: 0,
+        first_inst,
+        count,
+    };
+    assert_eq!(l.groups, [g(0, 2)]);
+    assert_eq!(l.second_groups, [g(1, 2)]);
+    l.build_ghosts(
+        &[at(true, false), at(false, true), at(true, true)],
+        1,
+        100,
+        vis,
+    );
+    assert_eq!(l.ghosts, [0, 2], "Reihenfolge bleibt");
+    assert_eq!(l.ghost_groups, [g(3, 2)]);
+
+    let all = Visible {
+        camera: true,
+        shadow: true,
+        second: true,
+    };
+    let ghost = SkinDraw {
+        ghost: true,
+        ..Default::default()
+    };
+    let skins = [ghost, SkinDraw::default()];
+    l.build_skins(&skins, &[SkinDraw::default()], 100, |_| all);
+    let kinds: Vec<_> = l.skins.iter().map(|s| s.kind).collect();
+    assert_eq!(
+        kinds,
+        [SkinKind::Solid, SkinKind::Ghost, SkinKind::SecondOnly]
+    );
+    let v: Vec<_> = l
+        .skins
+        .iter()
+        .map(|s| (s.vis.camera, s.vis.shadow, s.vis.second))
+        .collect();
+    assert_eq!(
+        v,
+        [
+            (true, true, true),
+            (true, false, false),
+            (false, false, true)
+        ]
+    );
+    l.build_skins(&skins, &[], 1, |_| all);
+    assert_eq!((l.skins.len(), l.dropped), (1, 1));
 }

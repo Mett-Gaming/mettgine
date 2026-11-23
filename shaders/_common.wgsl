@@ -1,4 +1,20 @@
-// Gemeinsame Beleuchtung fuer Boxen und Meshes.
+// Gemeinsame Daten und Beleuchtung aller Shader: Sonne mit Schattenkarte oder Raeume mit Lampen,
+// jeweils mit Nebel. Set 0, Aufbau wie `Globals` und `GpuInst` in src/render/mod.rs.
+
+struct Globals {
+    view_proj: mat4x4<f32>,
+    light_vp: mat4x4<f32>,
+    inv_view_proj: mat4x4<f32>,
+    cam_pos: vec4<f32>,   // xyz, w = Zeit
+    sun_dir: vec4<f32>,   // Richtung ZUR Sonne, w = Schattenstaerke
+    sun_color: vec4<f32>, // rgb, w = Schattenkarten-Groesse (Texel)
+    sky_top: vec4<f32>,
+    horizon: vec4<f32>,   // rgb = Nebel/Horizont, w = Nebeldichte
+    ground: vec4<f32>,    // Umgebungslicht von unten
+    params: vec4<f32>,    // x = Lampenzahl, y = dunkle Raeume, z = 1 Raeume / 0 Sonne, w = zweite Kamera
+    sway: vec4<f32>,      // Schwanken der Boxen: x = seitlich, y = hoch, z = Gangende z, w = Gangende x
+    extra: vec4<f32>,     // x = Verfall der Welt-Materialien (0..1)
+};
 
 struct Light {
     pos: vec4<f32>,   // xyz, w = Radius
@@ -6,16 +22,72 @@ struct Light {
     extra: vec4<f32>, // x = Seed, y = Flackern
 };
 
-struct Push {
-    view_proj: mat4x4<f32>,
-    cam_pos: vec4<f32>,
-    params: vec4<f32>, // x = Zeit, y = Lichtanzahl, z = gekippt, w = Nebeldichte
-    fog_color: vec4<f32>,
-    sway: vec4<f32>, // x = seitlich, y = hoch, z = Gangende z, w = Gangende x
+struct Box {
+    center: vec4<f32>,
+    half_ext: vec4<f32>,
+    color: vec4<f32>,
+    // x = Material (0 normal, 1 Boden, 2 Decke, 3 leuchtend), y = Seed,
+    // z = Leuchtstaerke, w = Flackern
+    extra: vec4<f32>,
 };
 
-@group(0) @binding(1) var<storage, read> lights: array<Light>;
-var<push_constant> pc: Push;
+struct Inst {
+    model: mat4x4<f32>,
+    tint: vec4<f32>,  // rgb = Farbmultiplikator, a = Eigenleuchten
+    extra: vec4<f32>, // x = erster Knochen (Figuren), y = Blinken, z = Zerreissen, w = 1 schwankt mit
+};
+
+@group(0) @binding(0) var<storage, read> insts: array<Inst>;
+@group(0) @binding(1) var<storage, read> bones: array<mat4x4<f32>>;
+@group(0) @binding(2) var<uniform> g: Globals;
+@group(0) @binding(3) var shadow_map: texture_depth_2d;
+@group(0) @binding(4) var shadow_samp: sampler_comparison;
+@group(0) @binding(5) var<storage, read> lights: array<Light>;
+@group(0) @binding(6) var<storage, read> boxes: array<Box>;
+// Schild-Atlas: je Zeile (32 px hoch, 512 px breit) ein Schriftzug
+@group(0) @binding(7) var sign_tex: texture_2d<f32>;
+@group(0) @binding(8) var linear_samp: sampler;
+// Bild der zweiten Kamera
+@group(0) @binding(9) var camera_tex: texture_2d<f32>;
+
+// Beleuchtung durch Lampen statt Sonne?
+fn is_rooms() -> bool {
+    return g.params.z > 0.5;
+}
+
+fn fog_sun(p: vec3<f32>) -> f32 {
+    let d = length(p - g.cam_pos.xyz);
+    return clamp(1.0 - exp(-max(d - 25.0, 0.0) * g.horizon.w), 0.0, 1.0);
+}
+
+fn shadow_at(p: vec3<f32>, n: vec3<f32>) -> f32 {
+    let lp = g.light_vp * vec4<f32>(p + n * 0.06, 1.0);
+    let ndc = lp.xyz / lp.w;
+    // NDC y = +1 (oben) liegt in Bildzeile 0 der Schattenkarte
+    let uv = vec2<f32>(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
+    if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0 || ndc.z > 1.0) {
+        return 1.0;
+    }
+    let texel = 1.0 / g.sun_color.w;
+    var sum = 0.0;
+    for (var y = -1; y <= 1; y = y + 1) {
+        for (var x = -1; x <= 1; x = x + 1) {
+            let o = vec2<f32>(f32(x), f32(y)) * texel;
+            sum = sum + textureSampleCompareLevel(shadow_map, shadow_samp, uv + o, ndc.z - 0.0015);
+        }
+    }
+    return sum / 9.0;
+}
+
+fn shade_sun(base: vec3<f32>, p: vec3<f32>, n_in: vec3<f32>) -> vec3<f32> {
+    let n = normalize(n_in);
+    let sun = normalize(g.sun_dir.xyz);
+    let ndl = max(dot(n, sun), 0.0);
+    let sh = mix(1.0, shadow_at(p, n), g.sun_dir.w);
+    let hemi = mix(g.ground.rgb, g.sky_top.rgb, n.y * 0.5 + 0.5);
+    let col = base * (hemi * 0.6 + g.sun_color.rgb * ndl * sh);
+    return mix(col, g.horizon.rgb, fog_sun(p));
+}
 
 fn hash11(p: f32) -> f32 {
     return fract(sin(p * 127.1 + 311.7) * 43758.5453);
@@ -48,16 +120,16 @@ fn flicker(seed: f32, amount: f32, time: f32) -> f32 {
     return 0.75 + 0.25 * hash11(floor(time * 30.0) + seed);
 }
 
-fn fog_amount(p: vec3<f32>) -> f32 {
-    let dist = length(p - pc.cam_pos.xyz);
-    return clamp(1.0 - exp(-dist * pc.params.w), 0.0, 1.0);
+fn fog_rooms(p: vec3<f32>) -> f32 {
+    let dist = length(p - g.cam_pos.xyz);
+    return clamp(1.0 - exp(-dist * g.horizon.w), 0.0, 1.0);
 }
 
-fn shade(base: vec3<f32>, p: vec3<f32>, n_in: vec3<f32>) -> vec3<f32> {
+fn shade_rooms(base: vec3<f32>, p: vec3<f32>, n_in: vec3<f32>) -> vec3<f32> {
     let n = normalize(n_in);
-    let time = pc.params.x;
+    let time = g.cam_pos.w;
     var light = vec3<f32>(0.0);
-    let count = u32(pc.params.y);
+    let count = u32(g.params.x);
     for (var i = 0u; i < count; i = i + 1u) {
         let l = lights[i];
         let d = l.pos.xyz - p;
@@ -68,32 +140,59 @@ fn shade(base: vec3<f32>, p: vec3<f32>, n_in: vec3<f32>) -> vec3<f32> {
             light = light + l.color.rgb * l.color.w * att * diffuse * flicker(l.extra.x, l.extra.y, time);
         }
     }
-    let tipped = pc.params.z > 0.5;
+    let tipped = g.params.y > 0.5;
     let ambient = select(vec3<f32>(0.30, 0.30, 0.29), vec3<f32>(0.04, 0.05, 0.045), tipped);
     // Schwaches Camcorder-Licht im gekippten Markt, damit man Gestalten erkennt
     if (tipped) {
-        let dc = pc.cam_pos.xyz - p;
+        let dc = g.cam_pos.xyz - p;
         let lc = length(dc);
         let att = pow(max(1.0 - lc / 11.0, 0.0), 2.0);
         light = light + vec3<f32>(0.75, 0.8, 0.7) * 0.55 * att * (max(dot(n, dc / max(lc, 0.001)), 0.0) * 0.8 + 0.2);
     }
     let ao = mix(0.75, 1.0, clamp(p.y / 1.2, 0.0, 1.0));
     let col = base * (ambient + light) * ao;
-    return mix(col, pc.fog_color.rgb, fog_amount(p));
+    return mix(col, g.horizon.rgb, fog_rooms(p));
 }
 
 // Live-Verbiegen der Gaenge, identisch zu world::sway in Rust:
 // x = seitliches Schwanken (nur Regale/Ware), y = Hoehenwelle des Bodens (Steigung).
 fn sway(p: vec3<f32>) -> vec3<f32> {
-    let w = pc.sway;
+    let w = g.sway;
     if (w.x == 0.0 && w.y == 0.0) {
         return vec3<f32>(0.0);
     }
-    let t = pc.params.x;
+    let t = g.cam_pos.w;
     // Gangbereich beginnt bei x = 2.5, z = 4.0 (wie world::AISLES_X0/Z0)
     let mask = smoothstep(4.0, 6.0, p.z) * (1.0 - smoothstep(w.z - 2.0, w.z, p.z))
         * smoothstep(1.5, 3.0, p.x) * (1.0 - smoothstep(w.w - 0.5, w.w + 1.0, p.x));
     let lat = w.x * mask * sin(p.z * 0.45 + t * 0.7) * sin(t * 0.27 + 1.3);
     let up = w.y * mask * sin(p.z * 0.38 - t * 0.35 + 0.8);
     return vec3<f32>(lat, up, 0.0);
+}
+
+fn fog_amount(p: vec3<f32>) -> f32 {
+    if (is_rooms()) {
+        return fog_rooms(p);
+    }
+    return fog_sun(p);
+}
+
+fn shade(base: vec3<f32>, p: vec3<f32>, n: vec3<f32>) -> vec3<f32> {
+    if (is_rooms()) {
+        return shade_rooms(base, p, n);
+    }
+    return shade_sun(base, p, n);
+}
+
+// Eigenleuchten im Nebel der Raeume
+fn glow_rooms(color: vec3<f32>, p: vec3<f32>) -> vec3<f32> {
+    return mix(color, g.horizon.rgb, fog_rooms(p) * 0.4);
+}
+
+// Normale im Vertex-Shader: Raeume rechnen mit Einheitslaenge, die Sonne normiert im Fragment
+fn vertex_normal(n: vec3<f32>) -> vec3<f32> {
+    if (is_rooms()) {
+        return normalize(n);
+    }
+    return n;
 }

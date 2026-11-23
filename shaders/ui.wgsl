@@ -1,8 +1,7 @@
-// UI: Rechtecke und Bitmap-Text im 480x270-Raster (laeuft vor dem VHS-Pass,
-// damit auch Menues und HUD "auf Band" liegen).
+// UI: Rechtecke und Text (Schrift-Atlas) in virtuellen Einheiten, y nach unten.
 
 struct Push {
-    screen: vec4<f32>, // xy = Rastergroesse
+    screen: vec4<f32>, // xy = virtuelle Groesse
 };
 var<push_constant> pc: Push;
 
@@ -24,6 +23,7 @@ struct VsOut {
 @vertex
 fn vs_main(v: VsIn) -> VsOut {
     var out: VsOut;
+    // naga dreht y wie WebGPU: NDC y = +1 ist oben, UI-y waechst nach unten
     out.clip = vec4<f32>(v.pos.x / pc.screen.x * 2.0 - 1.0, 1.0 - v.pos.y / pc.screen.y * 2.0, 0.0, 1.0);
     out.uv = v.uv;
     out.color = v.color;
@@ -32,8 +32,9 @@ fn vs_main(v: VsIn) -> VsOut {
 
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
+    // ohne Verkleinerungsstufen begrenzt der Sampler auf Stufe 0
     // uv.x < 0: einfarbiges Rechteck
-    let glyph = textureSampleLevel(font_tex, font_samp, max(in.uv, vec2<f32>(0.0)), 0.0).r;
+    let glyph = textureSample(font_tex, font_samp, max(in.uv, vec2<f32>(0.0))).r;
     let a = select(glyph, 1.0, in.uv.x < 0.0);
     return vec4<f32>(in.color.rgb, in.color.a * a);
 }

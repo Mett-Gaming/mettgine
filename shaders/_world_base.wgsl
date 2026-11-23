@@ -1,21 +1,5 @@
-// Grundlage jedes Welt-Shaders: Boxen, Bindings und Vertex-Stufe. Vorher `_common.wgsl` einbinden,
+// Grundlage jedes Welt-Shaders: Boxen und Vertex-Stufe. Vorher `_common.wgsl` einbinden,
 // danach folgt die eigene `fs_main(in: VsOut)` des Spiels (siehe render::WorldShaders).
-
-struct Instance {
-    center: vec4<f32>,
-    half_ext: vec4<f32>,
-    color: vec4<f32>,
-    // x = Material (0 normal, 1 Boden, 2 Decke, 3 leuchtend), y = Seed,
-    // z = Leuchtstaerke, w = Flackern
-    extra: vec4<f32>,
-};
-
-@group(0) @binding(0) var<storage, read> instances: array<Instance>;
-// Schild-Atlas: je Zeile (32 px hoch, 512 px breit) ein Schriftzug
-@group(0) @binding(2) var sign_tex: texture_2d<f32>;
-@group(0) @binding(3) var sign_samp: sampler;
-// Bild der Ueberwachungskamera (Monitor-Material 6)
-@group(0) @binding(5) var monitor_tex: texture_2d<f32>;
 
 struct VsOut {
     @builtin(position) clip: vec4<f32>,
@@ -52,7 +36,7 @@ fn vs_main(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> 
     let corner = vi % 6u;
     let n = normals[face];
     let local = n + us[face] * qa[corner] + vs[face] * qb[corner];
-    let inst = instances[ii];
+    let inst = boxes[ii];
     // center.w = Drehung um die Hochachse (fuer gebogene Regale)
     let yaw = inst.center.w;
     let c = cos(yaw);
@@ -73,7 +57,7 @@ fn vs_main(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> 
     }
 
     var out: VsOut;
-    out.clip = pc.view_proj * vec4<f32>(wp, 1.0);
+    out.clip = g.view_proj * vec4<f32>(wp, 1.0);
     out.world_pos = wp;
     out.normal = vec3<f32>(n.x * c + n.z * s, n.y, -n.x * s + n.z * c);
     out.color = inst.color;

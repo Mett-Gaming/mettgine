@@ -18,9 +18,9 @@ pub(super) fn clamp_samples(wanted: u32, supported: vk::SampleCountFlags) -> vk:
     .map_or(vk::SampleCountFlags::TYPE_1, |(_, f)| f)
 }
 
-impl SceneRenderer {
+impl Renderer {
     /// Kantenglaettung (MSAA): 1 = aus (Vorgabe), 2, 4 oder 8 Abtastungen. Kann die Karte den
-    /// Wert nicht, gilt der naechstkleinere; siehe [`SceneRenderer::msaa`].
+    /// Wert nicht, gilt der naechstkleinere; siehe [`Renderer::msaa`].
     pub fn set_msaa(&mut self, samples: u32) {
         // SAFETY: Instanz und Geraet leben so lange wie der Renderer.
         let limits = unsafe {
@@ -76,7 +76,8 @@ impl SceneRenderer {
         // SAFETY: aufgerufen nach device_wait_idle; alte Pipelines werden genau einmal zerstoert.
         unsafe {
             let d = &self.ctx.device;
-            let new = create_scene_pipelines(d, self.pipes.scene_layout, self.wanted_samples)?;
+            let layout = self.pipes.scene_layout;
+            let new = create_scene_pipelines(d, layout, self.wanted_samples, &self.setup)?;
             let old = std::mem::replace(&mut self.pipes.scene, new);
             for p in old.all() {
                 d.destroy_pipeline(p, None);

@@ -1,6 +1,6 @@
 //! Zeichenflaeche fuer Menues und HUD in virtuellen Einheiten (Hoehe `scene::UI_HEIGHT`,
 //! Breite nach Seitenverhaeltnis, y nach unten): Rechtecke, Rahmen, Balken und Text aus einem
-//! [`FontAtlas`]. Ergebnis sind Dreiecke (`render::UiVertex`) fuer `SceneRenderer::draw`.
+//! [`FontAtlas`]. Ergebnis sind Dreiecke (`render::UiVertex`) fuer `Renderer::draw`.
 //!
 //! Farben und Layout gehoeren dem Spiel; hier gibt es nur neutrale Grundfarben.
 

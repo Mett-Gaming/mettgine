@@ -1,12 +1,12 @@
 //! Partikel: Staub, Rauch, Funken. Gerechnet auf dem Prozessor, gezeichnet vom
-//! Szenen-Renderer (`SceneRenderer::queue_particles`).
+//! Szenen-Renderer (`Renderer::queue_particles`).
 //!
 //! Welche Effekte es gibt, beschreibt das Spiel mit [`Style`]; hier liegt nur die Mechanik.
 
 use bytemuck::{Pod, Zeroable};
 use glam::{Vec3, Vec4};
 
-/// Ein gezeichnetes Partikel (Instanz-Daten, siehe `shaders/scene_particle.wgsl`).
+/// Ein gezeichnetes Partikel (Instanz-Daten, siehe `shaders/particle.wgsl`).
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Pod, Zeroable)]
 pub struct ParticleInst {

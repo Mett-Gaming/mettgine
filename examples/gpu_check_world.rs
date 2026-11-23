@@ -6,7 +6,10 @@
 
 use glam::{Mat4, Vec3, Vec4};
 use mettgine::gpu::{GpuInstance, GpuLight, MeshData, MeshVertex, SkinData, SkinVertex};
-use mettgine::render::{FrameParams, MeshDraw, Renderer, SkinDraw, UiVertex};
+use mettgine::render::{
+    Config, FrameInput, Lighting, MeshDraw, Post, Renderer, Resolution, Rooms, SkinDraw, UiSize,
+    UiVertex, Vhs, View,
+};
 use std::path::{Path, PathBuf};
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
@@ -108,31 +111,43 @@ fn world() -> (Vec<GpuInstance>, Vec<GpuLight>) {
     )
 }
 
-fn params(k: usize) -> FrameParams {
+fn params(k: usize) -> FrameInput<'static> {
     let eye = Vec3::new(0.4, 1.7, -1.5);
     let cam = |eye: Vec3, at: Vec3, fov: f32| {
         Mat4::perspective_rh(fov, 16.0 / 9.0, 0.05, 80.0) * Mat4::look_at_rh(eye, at, Vec3::Y)
     };
     let dark = k == 2;
-    FrameParams {
-        view_proj: cam(eye, Vec3::new(0.0, 1.3, 7.0), 1.2),
-        cam_pos: eye,
+    let view = |eye: Vec3, at: Vec3, fov: f32| View {
+        view_proj: cam(eye, at, fov),
+        pos: eye,
+    };
+    FrameInput {
+        view: view(eye, Vec3::new(0.0, 1.3, 7.0), 1.2),
+        second_camera: (k != 1)
+            .then(|| view(Vec3::new(4.0, 3.5, 14.0), Vec3::new(0.0, 0.5, 6.0), 1.0)),
         time: 12.34 + k as f32,
-        tipped: dark,
-        fog_color: Vec3::new(0.12, 0.13, 0.12),
-        fog_density: if dark { 0.09 } else { 0.02 },
-        glitch: if dark { 0.7 } else { 0.0 },
-        vhs: [1.0, 0.0, 1.0][k],
-        fade: 0.1,
-        red: if dark { 0.5 } else { 0.0 },
-        decay: k as f32 * 0.45,
-        sway: Vec4::new(0.3, 0.15, 20.0, 9.0) * (k as f32 * 0.5),
-        invert: if dark { 0.3 } else { 0.0 },
-        flash: 0.05,
-        monitor: (k != 1).then(|| {
-            let p = Vec3::new(4.0, 3.5, 14.0);
-            (cam(p, Vec3::new(0.0, 0.5, 6.0), 1.0), p)
+        lighting: Lighting::Rooms(Rooms {
+            dark,
+            fog_color: Vec3::new(0.12, 0.13, 0.12),
+            fog_density: if dark { 0.09 } else { 0.02 },
+            decay: k as f32 * 0.45,
+            sway: Vec4::new(0.3, 0.15, 20.0, 9.0) * (k as f32 * 0.5),
         }),
+        post: Post::Vhs(Vhs {
+            strength: [1.0, 0.0, 1.0][k],
+            dark,
+            glitch: if dark { 0.7 } else { 0.0 },
+            fade: 0.1,
+            red: if dark { 0.5 } else { 0.0 },
+            invert: if dark { 0.3 } else { 0.0 },
+            flash: 0.05,
+        }),
+        meshes: &[],
+        ghosts: &[],
+        skins: &[],
+        camera_skins: &[],
+        bones: &[],
+        ui: &[],
     }
 }
 
@@ -144,15 +159,24 @@ fn run(window: &Window, dir: &Path) -> Result<(), String> {
             .collect()
     };
     let (font, signs) = (pattern(128, 128), pattern(512, 64));
-    let mut r =
-        Renderer::new(window, &[pyramid()], &[skin()], &font, (&signs, 512, 64)).map_err(e)?;
+    let (meshes, skins) = ([pyramid()], [skin()]);
+    let config = Config {
+        signs: Some((&signs, 512, 64)),
+        resolution: Resolution::Fixed(480, 270),
+        ui: UiSize::Fixed(480, 270),
+        second_camera: Some((160, 90)),
+        smooth: false,
+        last_wins: false,
+        ..Config::new(&meshes, &skins, (&font, 128, 128))
+    };
+    let mut r = Renderer::new(window, &config).map_err(e)?;
     let (boxes, lights) = world();
     r.upload_world(&boxes, &lights).map_err(e)?;
     let at = |x: f32, z: f32| Mat4::from_translation(Vec3::new(x, 0.0, z));
     let mesh = |model: Mat4, w: f32| MeshDraw {
-        mesh: 0,
         model,
         tint: Vec4::new(1.0, 0.9, 0.8, w),
+        ..Default::default()
     };
     let statics: Vec<_> = (0..30)
         .map(|i| mesh(at(i as f32 * 0.5 - 7.0, 9.0 + (i % 4) as f32), 0.0))
@@ -169,6 +193,7 @@ fn run(window: &Window, dir: &Path) -> Result<(), String> {
         first_bone: 0,
         ghost,
         distort,
+        ..Default::default()
     };
     let people = [
         person(-1.5, false, 0.0),
@@ -202,8 +227,16 @@ fn run(window: &Window, dir: &Path) -> Result<(), String> {
         if let Some(p) = path {
             r.capture_next(p);
         }
-        r.draw(&params(k), &meshes, &ghosts, &people, &monitor, &bones, &ui)
-            .map_err(e)
+        r.draw(&FrameInput {
+            meshes: &meshes,
+            ghosts: &ghosts,
+            skins: &people,
+            camera_skins: &monitor,
+            bones: &bones,
+            ui: &ui,
+            ..params(k)
+        })
+        .map_err(e)
     };
     while r.splash_active() {
         shot(&mut r, 0, None)?;

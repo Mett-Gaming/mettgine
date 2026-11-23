@@ -1,6 +1,6 @@
 // Partikel: zur Kamera gedrehte Flaechen (particles::ParticleInst), Farbe mit Alpha vormultipliziert.
 
-#include "_scene.wgsl"
+#include "_common.wgsl"
 
 struct VsIn {
     @location(0) pos_size: vec4<f32>, // xyz, w = halbe Kantenlaenge
