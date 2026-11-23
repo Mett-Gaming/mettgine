@@ -38,22 +38,10 @@ impl Renderer {
         let fi = self.frame_index;
         let frame = self.frames[fi];
         unsafe {
-            let d = &self.ctx.device;
-            d.wait_for_fences(&[frame.in_flight], true, u64::MAX)?;
-            let image_index = match self.ctx.swapchain_loader.acquire_next_image(
-                self.swapchain.handle,
-                u64::MAX,
-                frame.image_available,
-                vk::Fence::null(),
-            ) {
-                Ok((i, _)) => i,
-                Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => {
-                    self.needs_recreate = true;
-                    return Ok(());
-                }
-                Err(e) => return Err(e.into()),
+            let Some(image_index) = present::acquire(&self.ctx, &self.swapchain, &frame)? else {
+                self.needs_recreate = true;
+                return Ok(());
             };
-            d.reset_fences(&[frame.in_flight])?;
 
             // Per-Frame-Daten schreiben (der Fence garantiert, dass die GPU damit fertig ist)
             let mesh_count = meshes.len().min(MAX_MESH_DRAWS);
@@ -98,29 +86,7 @@ impl Renderer {
             let ui_count = ui.len().min(MAX_UI_VERTS) / 3 * 3;
             self.ui_bufs[fi].write(bytemuck::cast_slice(&ui[..ui_count]));
 
-            let ext = self.swapchain.extent;
-            let cap_bytes = (ext.width * ext.height * 4) as u64;
-            let capturing = self.capture.is_some() && self.swapchain.can_capture;
-            if capturing
-                && self
-                    .capture_buf
-                    .as_ref()
-                    .map_or(true, |b| b.size < cap_bytes)
-            {
-                if let Some(old) = self.capture_buf.take() {
-                    old.destroy(&self.ctx.device);
-                }
-                self.capture_buf = Some(Buffer::new_host(
-                    &self.ctx,
-                    cap_bytes,
-                    vk::BufferUsageFlags::TRANSFER_DST,
-                )?);
-            }
-            let cap_target = if capturing {
-                self.capture_buf.as_ref().map(|b| b.buffer)
-            } else {
-                None
-            };
+            let cap_target = self.capture.prepare(&self.ctx, &self.swapchain)?;
 
             self.record(
                 frame.cmd,
@@ -136,42 +102,11 @@ impl Renderer {
                 cap_target,
             )?;
 
-            let wait = [frame.image_available];
-            let stages = [vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
-            let cmds = [frame.cmd];
-            let signal = [self.swapchain.render_finished[image_index as usize]];
-            d.queue_submit(
-                self.ctx.queue,
-                &[vk::SubmitInfo::default()
-                    .wait_semaphores(&wait)
-                    .wait_dst_stage_mask(&stages)
-                    .command_buffers(&cmds)
-                    .signal_semaphores(&signal)],
-                frame.in_flight,
-            )?;
-
-            let swapchains = [self.swapchain.handle];
-            let indices = [image_index];
-            match self.ctx.swapchain_loader.queue_present(
-                self.ctx.queue,
-                &vk::PresentInfoKHR::default()
-                    .wait_semaphores(&signal)
-                    .swapchains(&swapchains)
-                    .image_indices(&indices),
-            ) {
-                Ok(false) => {}
-                Ok(true) | Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => self.needs_recreate = true,
-                Err(e) => return Err(e.into()),
+            if present::submit_and_present(&self.ctx, &self.swapchain, &frame, image_index)? {
+                self.needs_recreate = true;
             }
-            if capturing {
-                self.ctx.device.device_wait_idle()?;
-                if let (Some(path), Some(buf)) = (self.capture.take(), &self.capture_buf) {
-                    let px = buf.read(cap_bytes as usize);
-                    let rgba = self.swapchain.format == vk::Format::R8G8B8A8_UNORM;
-                    if let Err(e) = write_bmp(&path, ext.width, ext.height, &px, rgba) {
-                        crate::crash::log(&format!("Screenshot fehlgeschlagen: {e}"));
-                    }
-                }
+            if cap_target.is_some() {
+                self.capture.finish(&self.ctx, &self.swapchain)?;
             }
         }
         self.frame_index = (self.frame_index + 1) % FRAMES_IN_FLIGHT;

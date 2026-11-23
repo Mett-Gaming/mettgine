@@ -1,153 +1,78 @@
-//! Hilfsfunktionen fuer den Renderer: Pipelines bauen, Schrift hochladen, Viewport, BMP-Export.
+//! Grafik-Pipelines bauen (Dynamic Rendering), gemeinsam fuer `render` und `scene`.
 
-use super::*;
+use super::Result;
+use ash::vk;
 
-/// 32-Bit-BMP schreiben (Pixel kommen als BGRA bzw. RGBA, oben links zuerst).
-pub(super) fn write_bmp(
-    path: &std::path::Path,
-    w: u32,
-    h: u32,
-    px: &[u8],
-    rgba: bool,
-) -> std::io::Result<()> {
-    let row = (w * 4) as usize;
-    let data_len = row * h as usize;
-    let mut out = Vec::with_capacity(54 + data_len);
-    out.extend_from_slice(b"BM");
-    out.extend_from_slice(&(54 + data_len as u32).to_le_bytes());
-    out.extend_from_slice(&[0; 4]);
-    out.extend_from_slice(&54u32.to_le_bytes());
-    out.extend_from_slice(&40u32.to_le_bytes());
-    out.extend_from_slice(&(w as i32).to_le_bytes());
-    out.extend_from_slice(&(h as i32).to_le_bytes()); // positiv = unten zuerst
-    out.extend_from_slice(&1u16.to_le_bytes());
-    out.extend_from_slice(&32u16.to_le_bytes());
-    out.extend_from_slice(&[0; 24]);
-    for y in (0..h as usize).rev() {
-        for p in px[y * row..(y + 1) * row].chunks_exact(4) {
-            if rgba {
-                out.extend_from_slice(&[p[2], p[1], p[0], 255]);
-            } else {
-                out.extend_from_slice(&[p[0], p[1], p[2], 255]);
-            }
-        }
+/// Deckkraft halbtransparenter Figuren und Modelle ([`Blend::Ghost`])
+const GHOST_ALPHA: f32 = 0.55;
+
+/// Wie eine Pipeline ihre Farbe mit dem Bild mischt.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Blend {
+    /// deckend
+    Opaque,
+    /// nach Alpha (UI)
+    Alpha,
+    /// feste Deckkraft (Hologramme)
+    Ghost,
+    /// Farbe ist schon mit Alpha multipliziert; Alpha 0 = reines Aufhellen (Partikel)
+    Premultiplied,
+}
+
+impl Blend {
+    fn attachment(self) -> vk::PipelineColorBlendAttachmentState {
+        use vk::BlendFactor as F;
+        let base = vk::PipelineColorBlendAttachmentState::default()
+            .color_write_mask(vk::ColorComponentFlags::RGBA);
+        let (src, dst, src_a, dst_a) = match self {
+            Blend::Opaque => return base,
+            Blend::Alpha => (
+                F::SRC_ALPHA,
+                F::ONE_MINUS_SRC_ALPHA,
+                F::ONE,
+                F::ONE_MINUS_SRC_ALPHA,
+            ),
+            Blend::Ghost => (
+                F::CONSTANT_ALPHA,
+                F::ONE_MINUS_CONSTANT_ALPHA,
+                F::ZERO,
+                F::ONE,
+            ),
+            Blend::Premultiplied => (
+                F::ONE,
+                F::ONE_MINUS_SRC_ALPHA,
+                F::ONE,
+                F::ONE_MINUS_SRC_ALPHA,
+            ),
+        };
+        base.blend_enable(true)
+            .src_color_blend_factor(src)
+            .dst_color_blend_factor(dst)
+            .color_blend_op(vk::BlendOp::ADD)
+            .src_alpha_blend_factor(src_a)
+            .dst_alpha_blend_factor(dst_a)
+            .alpha_blend_op(vk::BlendOp::ADD)
     }
-    std::fs::write(path, out)
 }
 
-pub(super) unsafe fn upload_r8(
-    ctx: &Context,
-    pool: vk::CommandPool,
-    img: &Image,
-    pixels: &[u8],
-    width: u32,
-    height: u32,
-) -> Result<()> {
-    let d = &ctx.device;
-    let staging = Buffer::new_host(ctx, pixels.len() as u64, vk::BufferUsageFlags::TRANSFER_SRC)?;
-    staging.write(pixels);
-    let cmd = d.allocate_command_buffers(
-        &vk::CommandBufferAllocateInfo::default()
-            .command_pool(pool)
-            .level(vk::CommandBufferLevel::PRIMARY)
-            .command_buffer_count(1),
-    )?[0];
-    d.begin_command_buffer(
-        cmd,
-        &vk::CommandBufferBeginInfo::default().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT),
-    )?;
-    d.cmd_pipeline_barrier(
-        cmd,
-        vk::PipelineStageFlags::TOP_OF_PIPE,
-        vk::PipelineStageFlags::TRANSFER,
-        vk::DependencyFlags::empty(),
-        &[],
-        &[],
-        &[image_barrier(
-            img.image,
-            vk::ImageAspectFlags::COLOR,
-            vk::ImageLayout::UNDEFINED,
-            vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-            vk::AccessFlags::empty(),
-            vk::AccessFlags::TRANSFER_WRITE,
-        )],
-    );
-    d.cmd_copy_buffer_to_image(
-        cmd,
-        staging.buffer,
-        img.image,
-        vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-        &[vk::BufferImageCopy {
-            buffer_offset: 0,
-            buffer_row_length: 0,
-            buffer_image_height: 0,
-            image_subresource: vk::ImageSubresourceLayers {
-                aspect_mask: vk::ImageAspectFlags::COLOR,
-                mip_level: 0,
-                base_array_layer: 0,
-                layer_count: 1,
-            },
-            image_offset: vk::Offset3D::default(),
-            image_extent: vk::Extent3D {
-                width,
-                height,
-                depth: 1,
-            },
-        }],
-    );
-    d.cmd_pipeline_barrier(
-        cmd,
-        vk::PipelineStageFlags::TRANSFER,
-        vk::PipelineStageFlags::FRAGMENT_SHADER,
-        vk::DependencyFlags::empty(),
-        &[],
-        &[],
-        &[image_barrier(
-            img.image,
-            vk::ImageAspectFlags::COLOR,
-            vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-            vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-            vk::AccessFlags::TRANSFER_WRITE,
-            vk::AccessFlags::SHADER_READ,
-        )],
-    );
-    d.end_command_buffer(cmd)?;
-    let cmds = [cmd];
-    d.queue_submit(
-        ctx.queue,
-        &[vk::SubmitInfo::default().command_buffers(&cmds)],
-        vk::Fence::null(),
-    )?;
-    d.queue_wait_idle(ctx.queue)?;
-    d.free_command_buffers(pool, &cmds);
-    staging.destroy(d);
-    Ok(())
+/// Beschreibung einer Grafik-Pipeline.
+pub(crate) struct PipelineDesc<'a> {
+    pub vs: &'a [u8],
+    pub fs: &'a [u8],
+    /// None = nur Tiefe (Schattenkarte)
+    pub color_format: Option<vk::Format>,
+    pub depth_format: Option<vk::Format>,
+    pub depth_test: bool,
+    pub depth_write: bool,
+    pub depth_compare: vk::CompareOp,
+    pub blend: Blend,
+    /// Abtastungen pro Bildpunkt (Kantenglaettung)
+    pub samples: vk::SampleCountFlags,
+    pub bindings: &'a [vk::VertexInputBindingDescription],
+    pub attributes: &'a [vk::VertexInputAttributeDescription],
 }
 
-pub(super) unsafe fn set_viewport(d: &ash::Device, cmd: vk::CommandBuffer, extent: vk::Extent2D) {
-    d.cmd_set_viewport(
-        cmd,
-        0,
-        &[vk::Viewport {
-            x: 0.0,
-            y: 0.0,
-            width: extent.width as f32,
-            height: extent.height as f32,
-            min_depth: 0.0,
-            max_depth: 1.0,
-        }],
-    );
-    d.cmd_set_scissor(
-        cmd,
-        0,
-        &[vk::Rect2D {
-            offset: vk::Offset2D::default(),
-            extent,
-        }],
-    );
-}
-
-pub(super) unsafe fn create_pipeline(
+pub(crate) unsafe fn create_pipeline(
     d: &ash::Device,
     layout: vk::PipelineLayout,
     desc: &PipelineDesc,
@@ -181,45 +106,26 @@ pub(super) unsafe fn create_pipeline(
         .cull_mode(vk::CullModeFlags::NONE)
         .front_face(vk::FrontFace::COUNTER_CLOCKWISE)
         .line_width(1.0);
-    let multisample = vk::PipelineMultisampleStateCreateInfo::default()
-        .rasterization_samples(vk::SampleCountFlags::TYPE_1);
+    let multisample =
+        vk::PipelineMultisampleStateCreateInfo::default().rasterization_samples(desc.samples);
     let depth = vk::PipelineDepthStencilStateCreateInfo::default()
         .depth_test_enable(desc.depth_test)
-        .depth_write_enable(desc.depth_test && !desc.ghost)
-        .depth_compare_op(vk::CompareOp::LESS);
-    let mut blend_att = vk::PipelineColorBlendAttachmentState::default()
-        .color_write_mask(vk::ColorComponentFlags::RGBA);
-    if desc.blend {
-        blend_att = blend_att
-            .blend_enable(true)
-            .src_color_blend_factor(vk::BlendFactor::SRC_ALPHA)
-            .dst_color_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA)
-            .color_blend_op(vk::BlendOp::ADD)
-            .src_alpha_blend_factor(vk::BlendFactor::ONE)
-            .dst_alpha_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA)
-            .alpha_blend_op(vk::BlendOp::ADD);
-    }
-    if desc.ghost {
-        blend_att = blend_att
-            .blend_enable(true)
-            .src_color_blend_factor(vk::BlendFactor::CONSTANT_ALPHA)
-            .dst_color_blend_factor(vk::BlendFactor::ONE_MINUS_CONSTANT_ALPHA)
-            .color_blend_op(vk::BlendOp::ADD)
-            .src_alpha_blend_factor(vk::BlendFactor::ZERO)
-            .dst_alpha_blend_factor(vk::BlendFactor::ONE)
-            .alpha_blend_op(vk::BlendOp::ADD);
-    }
-    let blend_attachments = [blend_att];
+        .depth_write_enable(desc.depth_write)
+        .depth_compare_op(desc.depth_compare);
+    let blend_attachments = [desc.blend.attachment()];
     let blend = vk::PipelineColorBlendStateCreateInfo::default()
-        .attachments(&blend_attachments)
-        .blend_constants([0.0, 0.0, 0.0, 0.55]);
+        .attachments(if desc.color_format.is_some() {
+            &blend_attachments[..]
+        } else {
+            &[]
+        })
+        .blend_constants([0.0, 0.0, 0.0, GHOST_ALPHA]);
     let dynamic_states = [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
     let dynamic = vk::PipelineDynamicStateCreateInfo::default().dynamic_states(&dynamic_states);
-    let color_formats = [desc.color_format];
+    let color_formats: Vec<vk::Format> = desc.color_format.into_iter().collect();
     let mut rendering = vk::PipelineRenderingCreateInfo::default()
         .color_attachment_formats(&color_formats)
         .depth_attachment_format(desc.depth_format.unwrap_or(vk::Format::UNDEFINED));
-
     let info = vk::GraphicsPipelineCreateInfo::default()
         .stages(&stages)
         .vertex_input_state(&vertex_input)

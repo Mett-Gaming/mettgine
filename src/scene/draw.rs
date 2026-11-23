@@ -1,7 +1,6 @@
 //! Ein Bild zeichnen: Instanzen sortieren und gruppieren, Puffer fuellen, aufnehmen,
 //! abschicken, anzeigen. Dazu Neuaufbau nach Groessenwechsel.
 
-use super::helpers::write_bmp;
 use super::*;
 
 /// Sortiert Modelle nach Mesh (Schattenwerfer zuerst) und bildet instanzierte Gruppen fuer die
@@ -97,22 +96,10 @@ impl SceneRenderer {
         let frame = self.frames[fi];
         // SAFETY: Der Fence garantiert, dass die GPU mit den Puffern dieses Bildes fertig ist.
         unsafe {
-            let d = &self.ctx.device;
-            d.wait_for_fences(&[frame.in_flight], true, u64::MAX)?;
-            let image_index = match self.ctx.swapchain_loader.acquire_next_image(
-                self.swapchain.handle,
-                u64::MAX,
-                frame.image_available,
-                vk::Fence::null(),
-            ) {
-                Ok((i, _)) => i,
-                Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => {
-                    self.needs_recreate = true;
-                    return Ok(());
-                }
-                Err(e) => return Err(e.into()),
+            let Some(image_index) = present::acquire(&self.ctx, &self.swapchain, &frame)? else {
+                self.needs_recreate = true;
+                return Ok(());
             };
-            d.reset_fences(&[frame.in_flight])?;
 
             let (order, groups, shadow_groups) =
                 build_groups(meshes, self.mesh_ranges.len(), MAX_INSTANCES);
@@ -145,7 +132,7 @@ impl SceneRenderer {
             let ui_count = ui.len().min(MAX_UI_VERTS) / 3 * 3;
             self.ui_bufs[fi].write(bytemuck::cast_slice(&ui[..ui_count]));
 
-            let cap_target = self.prepare_capture()?;
+            let cap_target = self.capture.prepare(&self.ctx, &self.swapchain)?;
             let counts = super::frame::Counts {
                 skin_base,
                 skin_count,
@@ -162,79 +149,14 @@ impl SceneRenderer {
                 counts,
                 cap_target,
             )?;
-            self.submit_and_present(frame, image_index)?;
+            if present::submit_and_present(&self.ctx, &self.swapchain, &frame, image_index)? {
+                self.needs_recreate = true;
+            }
             if cap_target.is_some() {
-                self.finish_capture()?;
+                self.capture.finish(&self.ctx, &self.swapchain)?;
             }
         }
         self.frame_index = (self.frame_index + 1) % FRAMES_IN_FLIGHT;
-        Ok(())
-    }
-
-    unsafe fn submit_and_present(&mut self, frame: Frame, image_index: u32) -> Result<()> {
-        let wait = [frame.image_available];
-        let stages = [vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
-        let cmds = [frame.cmd];
-        let signal = [self.swapchain.render_finished[image_index as usize]];
-        self.ctx.device.queue_submit(
-            self.ctx.queue,
-            &[vk::SubmitInfo::default()
-                .wait_semaphores(&wait)
-                .wait_dst_stage_mask(&stages)
-                .command_buffers(&cmds)
-                .signal_semaphores(&signal)],
-            frame.in_flight,
-        )?;
-        let swapchains = [self.swapchain.handle];
-        let indices = [image_index];
-        match self.ctx.swapchain_loader.queue_present(
-            self.ctx.queue,
-            &vk::PresentInfoKHR::default()
-                .wait_semaphores(&signal)
-                .swapchains(&swapchains)
-                .image_indices(&indices),
-        ) {
-            Ok(false) => Ok(()),
-            Ok(true) | Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => {
-                self.needs_recreate = true;
-                Ok(())
-            }
-            Err(e) => Err(e.into()),
-        }
-    }
-
-    /// Bildschirmfoto vorbereiten: Zielpuffer fuer die Kopie (nur wenn angefordert).
-    fn prepare_capture(&mut self) -> Result<Option<vk::Buffer>> {
-        if self.capture.is_none() || !self.swapchain.can_capture {
-            return Ok(None);
-        }
-        let ext = self.swapchain.extent;
-        let bytes = (ext.width * ext.height * 4) as u64;
-        if self.capture_buf.as_ref().map_or(true, |b| b.size < bytes) {
-            if let Some(old) = self.capture_buf.take() {
-                old.destroy(&self.ctx.device);
-            }
-            self.capture_buf = Some(Buffer::new_host(
-                &self.ctx,
-                bytes,
-                vk::BufferUsageFlags::TRANSFER_DST,
-            )?);
-        }
-        Ok(self.capture_buf.as_ref().map(|b| b.buffer))
-    }
-
-    /// Bildschirmfoto auslesen (wartet einmal auf die GPU, nur bei Fotos).
-    fn finish_capture(&mut self) -> Result<()> {
-        // SAFETY: Warten, damit die Kopie fertig im Puffer liegt.
-        unsafe { self.ctx.device.device_wait_idle()? };
-        let ext = self.swapchain.extent;
-        if let (Some(path), Some(buf)) = (self.capture.take(), &self.capture_buf) {
-            let px = buf.read((ext.width * ext.height * 4) as usize);
-            let rgba = self.swapchain.format == vk::Format::R8G8B8A8_UNORM;
-            if let Err(e) = write_bmp(&path, ext.width, ext.height, &px, rgba) {
-                crate::crash::log(&format!("Bildschirmfoto fehlgeschlagen: {e}"));
-            }
-        }
         Ok(())
     }
 }

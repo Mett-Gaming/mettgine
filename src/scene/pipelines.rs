@@ -2,9 +2,9 @@
 //! Nachbearbeitung, UI). Vertex-Layouts: `gpu::MeshVertex` (36 Byte), `gpu::SkinVertex`
 //! (68 Byte), `render::UiVertex` (32 Byte).
 
-use super::helpers::{create_pipeline, PipelineDesc};
 use super::*;
 use crate::gpu::{MeshVertex, SkinVertex};
+use crate::render::pipeline::{create_pipeline, Blend, PipelineDesc};
 use std::mem::size_of;
 
 macro_rules! spv {
@@ -91,7 +91,9 @@ pub(super) unsafe fn create_pipelines(
         depth_format: Some(DEPTH_FORMAT),
         depth_test: true,
         depth_write: true,
-        blend: false,
+        depth_compare: vk::CompareOp::LESS_OR_EQUAL,
+        blend: Blend::Opaque,
+        samples: vk::SampleCountFlags::TYPE_1,
         bindings,
         attributes,
     };
@@ -106,7 +108,9 @@ pub(super) unsafe fn create_pipelines(
         depth_format: None,
         depth_test: false,
         depth_write: false,
+        depth_compare: vk::CompareOp::LESS_OR_EQUAL,
         blend,
+        samples: vk::SampleCountFlags::TYPE_1,
         bindings,
         attributes,
     };
@@ -164,7 +168,7 @@ pub(super) unsafe fn create_pipelines(
             &screen(
                 spv!("scene_ui.vert"),
                 spv!("scene_ui.frag"),
-                true,
+                Blend::Alpha,
                 &ui_bind,
                 &ui_attrs,
             ),
@@ -175,7 +179,7 @@ pub(super) unsafe fn create_pipelines(
             &screen(
                 spv!("scene_post.vert"),
                 spv!("scene_post.frag"),
-                false,
+                Blend::Opaque,
                 &[],
                 &[],
             ),

@@ -1,9 +1,9 @@
 //! Aufbau des Szenen-Renderers: Bilder, Sampler, Descriptor-Sets, Befehlspuffer, Puffer.
 
-use super::helpers::{one_shot, upload_r8};
 use super::pipelines::create_pipelines;
 use super::*;
 use crate::gpu::{MeshData, SkinData};
+use crate::render::transfer::{one_shot, upload_r8};
 use crate::render::util::image_barrier;
 use std::mem::size_of;
 use winit::window::Window;
@@ -120,34 +120,6 @@ unsafe fn create_descriptors(d: &ash::Device) -> Result<Descriptors> {
     })
 }
 
-unsafe fn create_frames(ctx: &Context) -> Result<(vk::CommandPool, Vec<Frame>)> {
-    let d = &ctx.device;
-    let pool = d.create_command_pool(
-        &vk::CommandPoolCreateInfo::default()
-            .queue_family_index(ctx.queue_family)
-            .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER),
-        None,
-    )?;
-    let cmds = d.allocate_command_buffers(
-        &vk::CommandBufferAllocateInfo::default()
-            .command_pool(pool)
-            .level(vk::CommandBufferLevel::PRIMARY)
-            .command_buffer_count(FRAMES_IN_FLIGHT as u32),
-    )?;
-    let mut frames = Vec::with_capacity(FRAMES_IN_FLIGHT);
-    for cmd in cmds {
-        frames.push(Frame {
-            cmd,
-            image_available: d.create_semaphore(&vk::SemaphoreCreateInfo::default(), None)?,
-            in_flight: d.create_fence(
-                &vk::FenceCreateInfo::default().flags(vk::FenceCreateFlags::SIGNALED),
-                None,
-            )?,
-        });
-    }
-    Ok((pool, frames))
-}
-
 /// Alle Vertices hintereinander in einen Puffer; liefert (Start, Anzahl) je Eintrag.
 fn vertex_buffer<T: Pod>(ctx: &Context, items: &[&[T]]) -> Result<(Buffer, Vec<(u32, u32)>)> {
     let mut all: Vec<T> = Vec::new();
@@ -227,7 +199,7 @@ impl SceneRenderer {
                 desc.tex_set_layout,
                 swapchain.format,
             )?;
-            let (command_pool, frames) = create_frames(&ctx)?;
+            let (command_pool, frames) = present::create_frames(&ctx, FRAMES_IN_FLIGHT)?;
             upload_r8(&ctx, command_pool, &font_img, font.0, font.1, font.2)?;
             // Platzhalter-Tiefe einmal in einen lesbaren Zustand bringen
             one_shot(&ctx, command_pool, |cmd| {
@@ -299,8 +271,7 @@ impl SceneRenderer {
                 scratch_bones: Vec::with_capacity(1024),
                 window_size,
                 needs_recreate: false,
-                capture: None,
-                capture_buf: None,
+                capture: Capture::default(),
                 ctx,
             };
             renderer.write_scene_descriptors();

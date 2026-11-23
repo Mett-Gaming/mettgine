@@ -1,26 +1,13 @@
-//! Kleine Vulkan-Helfer des Szenen-Renderers: Pipeline bauen, Einmal-Befehle, Textur hochladen,
+//! Hochladen und Auslesen, gemeinsam fuer `render` und `scene`: Einmal-Befehle, Texturen,
 //! Viewport, BMP-Export.
 
-use super::*;
-use crate::render::util::image_barrier;
-
-/// Beschreibung einer Grafik-Pipeline (Dynamic Rendering).
-pub(super) struct PipelineDesc<'a> {
-    pub vs: &'a [u8],
-    pub fs: &'a [u8],
-    /// None = nur Tiefe (Schattenkarte)
-    pub color_format: Option<vk::Format>,
-    pub depth_format: Option<vk::Format>,
-    pub depth_test: bool,
-    pub depth_write: bool,
-    /// Alpha-Mischung (UI)
-    pub blend: bool,
-    pub bindings: &'a [vk::VertexInputBindingDescription],
-    pub attributes: &'a [vk::VertexInputAttributeDescription],
-}
+use super::context::Context;
+use super::util::{image_barrier, Buffer, Image};
+use super::Result;
+use ash::vk;
 
 /// 32-Bit-BMP schreiben (Pixel als BGRA bzw. RGBA, oben links zuerst).
-pub(super) fn write_bmp(
+pub(crate) fn write_bmp(
     path: &std::path::Path,
     w: u32,
     h: u32,
@@ -53,7 +40,7 @@ pub(super) fn write_bmp(
 }
 
 /// Einmal-Befehlspuffer aufnehmen, abschicken und warten (nur beim Aufbau).
-pub(super) unsafe fn one_shot(
+pub(crate) unsafe fn one_shot(
     ctx: &Context,
     pool: vk::CommandPool,
     record: impl FnOnce(vk::CommandBuffer),
@@ -83,7 +70,7 @@ pub(super) unsafe fn one_shot(
 }
 
 /// Graustufen-Textur (R8) hochladen und fuer Shader lesbar machen.
-pub(super) unsafe fn upload_r8(
+pub(crate) unsafe fn upload_r8(
     ctx: &Context,
     pool: vk::CommandPool,
     img: &Image,
@@ -155,7 +142,7 @@ pub(super) unsafe fn upload_r8(
     result
 }
 
-pub(super) unsafe fn set_viewport(d: &ash::Device, cmd: vk::CommandBuffer, extent: vk::Extent2D) {
+pub(crate) unsafe fn set_viewport(d: &ash::Device, cmd: vk::CommandBuffer, extent: vk::Extent2D) {
     d.cmd_set_viewport(
         cmd,
         0,
@@ -176,89 +163,4 @@ pub(super) unsafe fn set_viewport(d: &ash::Device, cmd: vk::CommandBuffer, exten
             extent,
         }],
     );
-}
-
-pub(super) unsafe fn create_pipeline(
-    d: &ash::Device,
-    layout: vk::PipelineLayout,
-    desc: &PipelineDesc,
-) -> Result<vk::Pipeline> {
-    let vs_code = ash::util::read_spv(&mut std::io::Cursor::new(desc.vs))?;
-    let fs_code = ash::util::read_spv(&mut std::io::Cursor::new(desc.fs))?;
-    let vs_mod =
-        d.create_shader_module(&vk::ShaderModuleCreateInfo::default().code(&vs_code), None)?;
-    let fs_mod =
-        d.create_shader_module(&vk::ShaderModuleCreateInfo::default().code(&fs_code), None)?;
-    let stages = [
-        vk::PipelineShaderStageCreateInfo::default()
-            .stage(vk::ShaderStageFlags::VERTEX)
-            .module(vs_mod)
-            .name(c"vs_main"),
-        vk::PipelineShaderStageCreateInfo::default()
-            .stage(vk::ShaderStageFlags::FRAGMENT)
-            .module(fs_mod)
-            .name(c"fs_main"),
-    ];
-    let vertex_input = vk::PipelineVertexInputStateCreateInfo::default()
-        .vertex_binding_descriptions(desc.bindings)
-        .vertex_attribute_descriptions(desc.attributes);
-    let input_assembly = vk::PipelineInputAssemblyStateCreateInfo::default()
-        .topology(vk::PrimitiveTopology::TRIANGLE_LIST);
-    let viewport = vk::PipelineViewportStateCreateInfo::default()
-        .viewport_count(1)
-        .scissor_count(1);
-    let raster = vk::PipelineRasterizationStateCreateInfo::default()
-        .polygon_mode(vk::PolygonMode::FILL)
-        .cull_mode(vk::CullModeFlags::NONE)
-        .front_face(vk::FrontFace::COUNTER_CLOCKWISE)
-        .line_width(1.0);
-    let multisample = vk::PipelineMultisampleStateCreateInfo::default()
-        .rasterization_samples(vk::SampleCountFlags::TYPE_1);
-    let depth = vk::PipelineDepthStencilStateCreateInfo::default()
-        .depth_test_enable(desc.depth_test)
-        .depth_write_enable(desc.depth_write)
-        .depth_compare_op(vk::CompareOp::LESS_OR_EQUAL);
-    let mut blend_att = vk::PipelineColorBlendAttachmentState::default()
-        .color_write_mask(vk::ColorComponentFlags::RGBA);
-    if desc.blend {
-        blend_att = blend_att
-            .blend_enable(true)
-            .src_color_blend_factor(vk::BlendFactor::SRC_ALPHA)
-            .dst_color_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA)
-            .color_blend_op(vk::BlendOp::ADD)
-            .src_alpha_blend_factor(vk::BlendFactor::ONE)
-            .dst_alpha_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA)
-            .alpha_blend_op(vk::BlendOp::ADD);
-    }
-    let blend_attachments = [blend_att];
-    let blend = vk::PipelineColorBlendStateCreateInfo::default().attachments(
-        if desc.color_format.is_some() {
-            &blend_attachments[..]
-        } else {
-            &[]
-        },
-    );
-    let dynamic_states = [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
-    let dynamic = vk::PipelineDynamicStateCreateInfo::default().dynamic_states(&dynamic_states);
-    let color_formats: Vec<vk::Format> = desc.color_format.into_iter().collect();
-    let mut rendering = vk::PipelineRenderingCreateInfo::default()
-        .color_attachment_formats(&color_formats)
-        .depth_attachment_format(desc.depth_format.unwrap_or(vk::Format::UNDEFINED));
-    let info = vk::GraphicsPipelineCreateInfo::default()
-        .stages(&stages)
-        .vertex_input_state(&vertex_input)
-        .input_assembly_state(&input_assembly)
-        .viewport_state(&viewport)
-        .rasterization_state(&raster)
-        .multisample_state(&multisample)
-        .depth_stencil_state(&depth)
-        .color_blend_state(&blend)
-        .dynamic_state(&dynamic)
-        .layout(layout)
-        .push_next(&mut rendering);
-    let result = d.create_graphics_pipelines(vk::PipelineCache::null(), &[info], None);
-    d.destroy_shader_module(vs_mod, None);
-    d.destroy_shader_module(fs_mod, None);
-    let pipelines = result.map_err(|(_, e)| e)?;
-    Ok(pipelines[0])
 }

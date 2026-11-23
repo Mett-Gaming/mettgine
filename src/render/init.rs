@@ -273,30 +273,7 @@ impl Renderer {
                 post: post_pipeline,
             } = create_pipelines(d, scene_layout, post_layout, ui_layout, swapchain.format)?;
 
-            let command_pool = d.create_command_pool(
-                &vk::CommandPoolCreateInfo::default()
-                    .queue_family_index(ctx.queue_family)
-                    .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER),
-                None,
-            )?;
-            let cmds = d.allocate_command_buffers(
-                &vk::CommandBufferAllocateInfo::default()
-                    .command_pool(command_pool)
-                    .level(vk::CommandBufferLevel::PRIMARY)
-                    .command_buffer_count(FRAMES_IN_FLIGHT as u32),
-            )?;
-            let mut frames = Vec::with_capacity(FRAMES_IN_FLIGHT);
-            for cmd in cmds {
-                frames.push(Frame {
-                    cmd,
-                    image_available: d
-                        .create_semaphore(&vk::SemaphoreCreateInfo::default(), None)?,
-                    in_flight: d.create_fence(
-                        &vk::FenceCreateInfo::default().flags(vk::FenceCreateFlags::SIGNALED),
-                        None,
-                    )?,
-                });
-            }
+            let (command_pool, frames) = present::create_frames(&ctx, FRAMES_IN_FLIGHT)?;
 
             // Font-Atlas hochladen
             upload_r8(&ctx, command_pool, &font_img, font, 128, 128)?;
@@ -401,8 +378,7 @@ impl Renderer {
                 ui_bufs,
                 window_size: (size.width, size.height),
                 needs_recreate: false,
-                capture: None,
-                capture_buf: None,
+                capture: Capture::default(),
                 ctx,
             };
             renderer.write_scene_descriptors();

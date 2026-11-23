@@ -17,11 +17,11 @@
 
 mod draw;
 mod frame;
-mod helpers;
 mod init;
 mod pipelines;
 
 use crate::render::context::Context;
+use crate::render::present::{self, Capture, Frame};
 use crate::render::swapchain::Swapchain;
 use crate::render::util::{Buffer, Image};
 pub use crate::render::{Result, UiVertex};
@@ -182,13 +182,6 @@ pub fn light_view_proj(sun_dir: Vec3, center: Vec3, radius: f32) -> Mat4 {
     proj * view
 }
 
-#[derive(Clone, Copy)]
-struct Frame {
-    cmd: vk::CommandBuffer,
-    image_available: vk::Semaphore,
-    in_flight: vk::Fence,
-}
-
 /// Zusammenhaengende Instanzen eines Modells (ein instanzierter Draw-Call).
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Group {
@@ -248,8 +241,7 @@ pub struct SceneRenderer {
     scratch_bones: Vec<[[f32; 4]; 4]>,
     window_size: (u32, u32),
     needs_recreate: bool,
-    capture: Option<std::path::PathBuf>,
-    capture_buf: Option<Buffer>,
+    capture: Capture,
     // Muss zuletzt freigegeben werden (Drop-Reihenfolge der Felder).
     ctx: Context,
 }
@@ -269,7 +261,7 @@ impl SceneRenderer {
 
     /// Speichert das naechste fertige Bild als BMP.
     pub fn capture_next(&mut self, path: std::path::PathBuf) {
-        self.capture = Some(path);
+        self.capture.request(path);
     }
 
     /// Fenstergroesse hat sich geaendert (Pixel).
@@ -306,10 +298,7 @@ impl Drop for SceneRenderer {
         unsafe {
             let d = &self.ctx.device;
             let _ = d.device_wait_idle();
-            for f in &self.frames {
-                d.destroy_semaphore(f.image_available, None);
-                d.destroy_fence(f.in_flight, None);
-            }
+            present::destroy_frames(d, &self.frames);
             d.destroy_command_pool(self.command_pool, None);
             self.mesh_vertex_buf.destroy(d);
             self.skin_vertex_buf.destroy(d);
@@ -322,9 +311,7 @@ impl Drop for SceneRenderer {
             {
                 b.destroy(d);
             }
-            if let Some(b) = &self.capture_buf {
-                b.destroy(d);
-            }
+            self.capture.destroy(d);
             let p = &self.pipes;
             for pipe in [p.sky, p.mesh, p.skin, p.shadow, p.shadow_skin, p.ui, p.post] {
                 d.destroy_pipeline(pipe, None);

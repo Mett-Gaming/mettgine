@@ -1,7 +1,7 @@
 //! Aufnahme eines Bildes: Schattenkarte, Szene, Nachbearbeitung + UI, ggf. Bildschirmfoto.
 
-use super::helpers::set_viewport;
 use super::*;
+use crate::render::transfer::set_viewport;
 use crate::render::util::image_barrier;
 
 /// Zahlen, die die Aufnahme aus der Vorbereitung braucht.

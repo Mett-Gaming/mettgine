@@ -4,8 +4,10 @@
 //! Pass 2 (Swapchain): VHS-Post-Pass. Dynamic Rendering (Vulkan 1.3).
 
 pub(crate) mod context;
-mod pipeline;
+pub(crate) mod pipeline;
+pub(crate) mod present;
 pub(crate) mod swapchain;
+pub(crate) mod transfer;
 pub(crate) mod util;
 
 use crate::gpu::{GpuInstance, GpuLight, MeshData};
@@ -13,9 +15,11 @@ use ash::vk;
 use bytemuck::{Pod, Zeroable};
 use context::Context;
 use glam::{Mat4, Vec3, Vec4};
-use pipeline::{create_pipeline, set_viewport, upload_r8, write_bmp};
+use pipeline::{create_pipeline, Blend, PipelineDesc};
+use present::{Capture, Frame};
 use std::mem::size_of;
 use swapchain::Swapchain;
+use transfer::{set_viewport, upload_r8};
 use util::{image_barrier, Buffer, Image};
 use winit::window::Window;
 
@@ -129,26 +133,6 @@ pub struct FrameParams {
     pub monitor: Option<(Mat4, Vec3)>,
 }
 
-#[derive(Clone, Copy)]
-struct Frame {
-    cmd: vk::CommandBuffer,
-    image_available: vk::Semaphore,
-    in_flight: vk::Fence,
-}
-
-struct PipelineDesc<'a> {
-    vs: &'a [u8],
-    fs: &'a [u8],
-    color_format: vk::Format,
-    depth_format: Option<vk::Format>,
-    depth_test: bool,
-    blend: bool,
-    /// Halbtransparent (Hologramme): konstantes Alpha, schreibt keine Tiefe
-    ghost: bool,
-    bindings: &'a [vk::VertexInputBindingDescription],
-    attributes: &'a [vk::VertexInputAttributeDescription],
-}
-
 pub struct Renderer {
     swapchain: Swapchain,
     color: Image,
@@ -202,8 +186,7 @@ pub struct Renderer {
     ui_bufs: Vec<Buffer>,
     window_size: (u32, u32),
     needs_recreate: bool,
-    capture: Option<std::path::PathBuf>,
-    capture_buf: Option<Buffer>,
+    capture: Capture,
     // Muss zuletzt freigegeben werden (Drop-Reihenfolge der Felder).
     ctx: Context,
 }
@@ -228,7 +211,7 @@ impl Renderer {
 
     /// Speichert das naechste fertige Bild (nach VHS-Pass) als BMP.
     pub fn capture_next(&mut self, path: std::path::PathBuf) {
-        self.capture = Some(path);
+        self.capture.request(path);
     }
 
     pub fn resize(&mut self, width: u32, height: u32) {
@@ -242,10 +225,7 @@ impl Drop for Renderer {
         unsafe {
             let d = &self.ctx.device;
             let _ = d.device_wait_idle();
-            for f in &self.frames {
-                d.destroy_semaphore(f.image_available, None);
-                d.destroy_fence(f.in_flight, None);
-            }
+            present::destroy_frames(d, &self.frames);
             d.destroy_command_pool(self.command_pool, None);
             self.instance_buf.destroy(d);
             self.static_buf.destroy(d);
@@ -255,9 +235,7 @@ impl Drop for Renderer {
             for b in &self.bone_bufs {
                 b.destroy(d);
             }
-            if let Some(b) = &self.capture_buf {
-                b.destroy(d);
-            }
+            self.capture.destroy(d);
             for b in self.mesh_inst_bufs.iter().chain(self.ui_bufs.iter()) {
                 b.destroy(d);
             }
