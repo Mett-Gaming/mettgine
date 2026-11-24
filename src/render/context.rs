@@ -23,6 +23,7 @@ pub struct Context {
     pub queue: vk::Queue,
     pub swapchain_loader: ash::khr::swapchain::Device,
     pub rt: Option<RtFns>,
+    pub gpu_culling: bool,
     /// Techniken der Hersteller sind gewuenscht und da
     pub vendor: bool,
     /// Helligkeit laesst sich dem Bildschirm mitteilen
@@ -150,6 +151,7 @@ impl Context {
                 rt,
                 low_latency,
                 hdr_metadata,
+                gpu_culling,
                 diagnostics,
                 max_anisotropy,
             } = made;
@@ -161,6 +163,7 @@ impl Context {
             Ok(Self {
                 _entry: entry,
                 vendor: vendors.any(),
+                gpu_culling,
                 instance,
                 debug,
                 surface_loader,

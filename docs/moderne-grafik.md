@@ -59,6 +59,14 @@ FSR, XeSS, DLSS und Ray Reconstruction: siehe [hochskalieren.md](hochskalieren.m
 
 Nicht eingebaut, weil es sie (Stand November 2026) nur für DirectX 12 gibt: FSR Ray Regeneration, XeSS Frame Generation, XeLL.
 
+## Viel Geometrie
+
+`Config::gpu_culling` und `Features::gpu_culling` sortieren Verdecktes auf der Grafikkarte aus: eine Tiefenpyramide und indirekte Zeichenbefehle in zwei Durchgängen, sodass nie etwas fehlt, das gerade erst sichtbar wird. Schatten und Halbtransparentes sind nicht dabei. Testfall mit 4000 feinen Kugeln hinter einer Wand: 9,8 → 0,27 ms (RTX 5090), Bild gleich. Genau aufeinanderliegende Flächen können flimmern, weil sich ihre Reihenfolge ändert.
+
+Nicht eingebaut:
+- **Mesh-Shader:** naga 24 kann keine; Aussortieren in Stücken eines Modells fehlt damit.
+- **Async Compute:** SSAO und Bloom kosten im Testbild zusammen unter 0,1 ms; eine zweite Warteschlange wurde deshalb nicht ausprobiert.
+
 ## Prüfen
 
 ```powershell

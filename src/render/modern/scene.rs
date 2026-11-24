@@ -3,27 +3,18 @@
 use super::super::frame::{area, depth_clear};
 use super::super::transfer::set_viewport;
 use super::super::util::image_barrier;
-use super::prepare::{Batch, Kind};
+use super::drawing::Stage;
+use super::prepare::Batch;
 use super::{Inputs, Modern, SceneInput};
 use ash::vk;
 use glam::Mat4;
 
+const COMPUTE: vk::PipelineStageFlags = vk::PipelineStageFlags::COMPUTE_SHADER;
 const GFX: vk::PipelineBindPoint = vk::PipelineBindPoint::GRAPHICS;
 const DEPTH_STAGES: vk::PipelineStageFlags = vk::PipelineStageFlags::from_raw(
     vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS.as_raw()
         | vk::PipelineStageFlags::LATE_FRAGMENT_TESTS.as_raw(),
 );
-
-/// Welche Pipelines ein Durchgang benutzt.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Stage {
-    Shadow,
-    Pre,
-    /// wie `Pre`, mit Bildern fuers Entrauschen
-    Guides,
-    Opaque,
-    Blend,
-}
 
 /// Barriere fuer ein Bild.
 pub(super) fn barrier(
@@ -164,89 +155,6 @@ unsafe fn copy_scene(
 }
 
 impl Modern {
-    /// Zeichenbefehle aufnehmen, Zustand nur bei Wechsel setzen.
-    unsafe fn draw(&self, i: &Inputs, stage: Stage, batches: &[Batch]) {
-        let (d, cmd) = (&i.ctx.device, i.cmd);
-        let mut pipe = vk::Pipeline::null();
-        let mut material = None;
-        let mut model: Option<(Kind, u32)> = None;
-        let mut cull = None;
-        for b in batches {
-            let k = self.pipes.kind(b.kind);
-            let want = match stage {
-                Stage::Shadow if b.masked => k.shadow_masked,
-                Stage::Shadow => k.shadow,
-                Stage::Pre => k.pre,
-                Stage::Guides => k.guides.unwrap_or(k.pre),
-                Stage::Opaque => k.opaque,
-                Stage::Blend => k.blend,
-            };
-            if want != pipe {
-                d.cmd_bind_pipeline(cmd, GFX, want);
-                pipe = want;
-            }
-            let two_sided = b.double_sided;
-            if cull != Some(two_sided) {
-                d.cmd_set_cull_mode(
-                    cmd,
-                    if two_sided {
-                        vk::CullModeFlags::NONE
-                    } else {
-                        vk::CullModeFlags::BACK
-                    },
-                );
-                cull = Some(two_sided);
-            }
-            if material != Some(b.material) {
-                if let Some(m) = self.store.material(super::MaterialId(b.material)) {
-                    let sets = [m.set];
-                    d.cmd_bind_descriptor_sets(cmd, GFX, self.pipes.layout, 1, &sets, &[]);
-                }
-                material = Some(b.material);
-            }
-            let bind = model != Some((b.kind, b.model));
-            model = Some((b.kind, b.model));
-            self.draw_batch(i, b, bind);
-        }
-    }
-
-    /// Ein Zeichenbefehl; `bind` = das Modell hat gewechselt.
-    unsafe fn draw_batch(&self, i: &Inputs, b: &Batch, bind: bool) {
-        let (d, cmd) = (&i.ctx.device, i.cmd);
-        let (vertices, ranges) = match b.kind {
-            Kind::Mesh => (i.mesh_vertices, i.mesh_ranges),
-            Kind::Skin => (i.skin_vertices, i.skin_ranges),
-            Kind::Object | Kind::Skinned => {
-                let Some(m) = self.store.model(super::ModelId(b.model)) else {
-                    return;
-                };
-                if bind {
-                    d.cmd_bind_vertex_buffers(cmd, 0, &[m.vertices.buffer], &[0]);
-                    if let Some(j) = &m.joints {
-                        d.cmd_bind_vertex_buffers(cmd, 1, &[j.buffer], &[0]);
-                    }
-                    d.cmd_bind_index_buffer(cmd, m.indices.buffer, 0, vk::IndexType::UINT32);
-                }
-                d.cmd_draw_indexed(cmd, m.index_count, b.count, 0, 0, b.first);
-                return;
-            }
-        };
-        if bind {
-            d.cmd_bind_vertex_buffers(cmd, 0, &[vertices], &[0]);
-        }
-        if let Some(&(first, count)) = ranges.get(b.model as usize) {
-            d.cmd_draw(cmd, count, b.count, first, b.first);
-        }
-    }
-
-    unsafe fn bind_frame(&self, i: &Inputs, set: usize) {
-        let sets = [self.sets.frames[i.fi][set]];
-        let layout = self.pipes.layout;
-        i.ctx
-            .device
-            .cmd_bind_descriptor_sets(i.cmd, GFX, layout, 0, &sets, &[]);
-    }
-
     unsafe fn shadow_view(&self, i: &Inputs, vp: &Mat4, rect: vk::Rect2D, batches: &[Batch]) {
         let (d, cmd) = (&i.ctx.device, i.cmd);
         let viewport = vk::Viewport {
@@ -320,7 +228,29 @@ impl Modern {
     }
 
     /// Tiefe, Normale und Bewegung aller deckenden Objekte.
-    pub(super) unsafe fn record_prepass(&self, i: &Inputs) {
+    ///
+    /// `old` = Kamera des letzten Bildes (fuers Aussortieren).
+    pub(super) unsafe fn record_prepass(&mut self, i: &Inputs, old: &Mat4) {
+        let at = (i.cmd, i.fi);
+        let mut culling = self.culling.take().filter(|_| self.gpu_cull);
+        if let Some(c) = &culling {
+            c.record_cull(i.ctx, at, 1, old);
+        }
+        self.culling = culling.take();
+        self.depth_pass(i, 0);
+        if !self.gpu_cull {
+            return;
+        }
+        let now = self.view_proj_now;
+        if let Some(c) = &mut self.culling {
+            c.record_pyramid(i.ctx, at);
+            c.record_cull(i.ctx, at, 2, &now);
+        }
+        self.depth_pass(i, 1);
+    }
+
+    /// Tiefen-Durchgang; `list` = 0 beginnt neu, 1 ergaenzt das zunaechst Aussortierte.
+    unsafe fn depth_pass(&self, i: &Inputs, list: usize) {
         let Some(t) = &self.targets else {
             return;
         };
@@ -334,13 +264,25 @@ impl Modern {
             color_target(t.motion.image),
         ];
         images.extend(guides.clone().map(|g| color_target(g.image)));
+        if list == 1 {
+            // Inhalt behalten
+            for (k, b) in images.iter_mut().enumerate() {
+                b.old_layout = match k {
+                    0 => vk::ImageLayout::DEPTH_STENCIL_READ_ONLY_OPTIMAL,
+                    _ => vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                };
+            }
+        }
         barrier(
             d,
             cmd,
-            (frag | DEPTH_STAGES | out, DEPTH_STAGES | out),
+            (frag | DEPTH_STAGES | out | COMPUTE, DEPTH_STAGES | out),
             &images,
         );
-        let clear = vk::AttachmentLoadOp::CLEAR;
+        let clear = match list {
+            0 => vk::AttachmentLoadOp::CLEAR,
+            _ => vk::AttachmentLoadOp::LOAD,
+        };
         let mut colors = vec![
             color_att(t.normal.view, clear),
             color_att(t.motion.view, clear),
@@ -363,9 +305,10 @@ impl Modern {
         } else {
             Stage::Pre
         };
-        self.draw(i, stage, self.batches(&self.views.camera));
+        self.draw_camera(i, stage, list..list + 1);
         // nur wer den Verlauf nutzt, braucht die Bewegung des Himmels
-        if t.wants.temporal() {
+        let last = list == 1 || !self.gpu_cull;
+        if last && t.wants.temporal() {
             let sky = self.pipes.sky_guides.filter(|_| t.wants.guides);
             d.cmd_bind_pipeline(cmd, GFX, sky.unwrap_or(self.pipes.sky_move));
             self.bind_any_material(i);
@@ -381,7 +324,12 @@ impl Modern {
             color_read(t.motion.image),
         ];
         images.extend(guides.map(|g| color_read(g.image)));
-        barrier(d, cmd, (DEPTH_STAGES | out, frag | DEPTH_STAGES), &images);
+        barrier(
+            d,
+            cmd,
+            (DEPTH_STAGES | out, frag | DEPTH_STAGES | COMPUTE),
+            &images,
+        );
     }
 
     /// Beleuchtung ins HDR-Bild, danach Halbtransparentes und Partikel. `traced` = das Deckende
@@ -416,7 +364,7 @@ impl Modern {
         self.bind_frame(i, 1);
         if !traced {
             self.mark_blended(i, false);
-            self.draw(i, Stage::Opaque, self.batches(&self.views.camera));
+            self.draw_camera(i, Stage::Opaque, 0..2);
             d.cmd_bind_pipeline(cmd, GFX, self.pipes.sky);
             self.bind_any_material(i);
             d.cmd_draw(cmd, 3, 1, 0, 0);
@@ -473,7 +421,7 @@ impl Modern {
             if let Some(m) = self.store.material(super::MaterialId(b.material)) {
                 let sets = [m.set];
                 d.cmd_bind_descriptor_sets(cmd, GFX, self.pipes.layout, 1, &sets, &[]);
-                self.draw_batch(i, b, k == 0);
+                self.draw_batch(i, b, k == 0, None);
             }
         }
     }

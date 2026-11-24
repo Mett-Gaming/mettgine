@@ -173,6 +173,7 @@ impl Renderer {
                 low_latency: cfg.low_latency,
                 diagnostics: cfg.diagnostics,
                 hdr: cfg.hdr_output,
+                gpu_culling: cfg.gpu_culling,
             },
             &vendors,
         )?;

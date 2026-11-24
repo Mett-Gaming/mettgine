@@ -17,6 +17,7 @@ pub struct Want {
     pub low_latency: bool,
     pub diagnostics: bool,
     pub hdr: bool,
+    pub gpu_culling: bool,
 }
 
 /// Funktionen fuer Raytracing (nur, wenn eingeschaltet und von der Karte unterstuetzt).
@@ -32,6 +33,8 @@ pub struct Made {
     pub rt: Option<RtFns>,
     pub low_latency: Support,
     pub hdr_metadata: bool,
+    /// indirekte Zeichenbefehle mit eigenem Anfang
+    pub gpu_culling: bool,
     pub diagnostics: Diagnostics,
     /// hoechste Filterstufe schraeg gesehener Texturen (1 = kann die Karte nicht)
     pub max_anisotropy: f32,
@@ -176,8 +179,10 @@ pub unsafe fn create(
     }
 
     let can = instance.get_physical_device_features(physical);
+    let gpu_culling = want.gpu_culling && can.draw_indirect_first_instance == vk::TRUE;
     let features = vk::PhysicalDeviceFeatures::default()
-        .sampler_anisotropy(can.sampler_anisotropy == vk::TRUE);
+        .sampler_anisotropy(can.sampler_anisotropy == vk::TRUE)
+        .draw_indirect_first_instance(gpu_culling);
     let max_anisotropy = if can.sampler_anisotropy == vk::TRUE {
         props.limits.max_sampler_anisotropy
     } else {
@@ -288,6 +293,7 @@ pub unsafe fn create(
         low_latency: Support::load(instance, &device, plan),
         diagnostics: Diagnostics::new(instance, &device, fault, budget),
         hdr_metadata,
+        gpu_culling,
         rt,
         max_anisotropy,
         device,

@@ -52,6 +52,9 @@ pub struct Config<'a> {
     /// Techniken der Hersteller bereitstellen (Vorgabe: keine). Braucht das passende Cargo-Feature
     /// und die DLLs neben der exe; was geht, sagt [`super::Renderer::upscalers`]
     pub upscalers: &'a [super::Upscaler],
+    /// Verdecktes auf der Grafikkarte aussortieren ([`super::Features::gpu_culling`]) bereitstellen
+    /// (Vorgabe: aus)
+    pub gpu_culling: bool,
     /// Ausgabe fuer HDR-Bildschirme bereitstellen (Vorgabe: aus). Ob sie laeuft, sagt
     /// [`super::Renderer::hdr_active`]; zeigt der Bildschirm kein HDR, bleibt es bei SDR
     pub hdr_output: bool,
@@ -80,6 +83,7 @@ impl<'a> Config<'a> {
             ray_tracing: false,
             low_latency: false,
             upscalers: &[],
+            gpu_culling: false,
             hdr_output: false,
             diagnostics: false,
         }

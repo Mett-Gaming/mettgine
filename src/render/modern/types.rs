@@ -250,6 +250,9 @@ pub struct Features {
     pub sharpen: f32,
     /// Strahlen von der Technik entrauschen lassen (nur DLSS: Ray Reconstruction), sonst selbst
     pub ray_reconstruction: bool,
+    /// Verdecktes auf der Grafikkarte aussortieren (braucht `Config::gpu_culling`). Lohnt bei sehr
+    /// vielen Dingen, die einander verdecken. Genau aufeinanderliegende Flaechen koennen flimmern
+    pub gpu_culling: bool,
     /// Technik eines Herstellers statt `anti_alias`; steht sie nicht bereit, gilt `anti_alias`
     pub upscaler: super::super::Upscaler,
 }
@@ -270,6 +273,7 @@ impl Default for Features {
             render_scale: 1.0,
             sharpen: 0.0,
             ray_reconstruction: false,
+            gpu_culling: false,
             upscaler: Default::default(),
         }
     }
@@ -292,6 +296,7 @@ impl Features {
             render_scale: 1.0,
             sharpen: 0.0,
             ray_reconstruction: false,
+            gpu_culling: false,
             upscaler: Default::default(),
         }
     }

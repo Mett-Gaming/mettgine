@@ -75,6 +75,8 @@ pub struct Lists {
     /// Reihenfolge der Instanzen aller Sichten (Stellen in `objs`)
     pub order: Vec<u32>,
     pub batches: Vec<Batch>,
+    /// Ausdehnung je Objekt (Radius < 0 = unbekannt)
+    pub spheres: Vec<[f32; 4]>,
     items: Vec<Item>,
     blended: Vec<(f32, u32)>,
     pub drawn: u32,
@@ -119,6 +121,7 @@ impl Lists {
         self.order.clear();
         self.batches.clear();
         self.items.clear();
+        self.spheres.clear();
         (self.drawn, self.culled) = (0, 0);
         self.add_objects(s, store, motion);
         self.add_boxes(plain);
@@ -133,6 +136,9 @@ impl Lists {
             ..item
         });
         self.objs.push(o);
+        let s = item.sphere.map(|s| s.center.extend(s.radius));
+        self.spheres
+            .push(s.unwrap_or(Vec4::new(0.0, 0.0, 0.0, -1.0)).to_array());
     }
 
     fn add_objects(&mut self, s: &SceneInput, store: &Store, motion: &mut Motion) {

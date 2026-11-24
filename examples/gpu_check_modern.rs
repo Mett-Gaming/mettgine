@@ -407,6 +407,7 @@ fn run(window: &Window, dir: &Path) -> std::result::Result<(), String> {
     let config = Config {
         ray_tracing: true,
         hdr_output: std::env::var_os("METTGINE_HDR").is_some(),
+        gpu_culling: true,
         ..Config::new(&meshes, &[], (&font, 128, 128))
     };
     let mut r = Renderer::new(window, &config).map_err(e)?;
@@ -494,11 +495,74 @@ fn run(window: &Window, dir: &Path) -> std::result::Result<(), String> {
             c.name, s.cpu_ms, s.gpu_ms, s.draw_calls
         );
     }
+    check_culling(&mut r, &world, dir)?;
     // Entfernen waehrend des Betriebs darf nichts kaputt machen
     r.remove_model(world.objects[0].model);
     r.remove_material(world.objects[1].material);
     for f in 0..5 {
         shot(&mut r, &world, &all[7], f, None).map_err(e)?;
+    }
+    Ok(())
+}
+
+/// Aussortieren auf der Grafikkarte darf am Bild nichts aendern. Feine Kugeln hinter einer Wand.
+fn check_culling(r: &mut Renderer, world: &World, dir: &Path) -> std::result::Result<(), String> {
+    let e = |e: Box<dyn std::error::Error>| e.to_string();
+    r.resize(W, H);
+    let ball = r
+        .add_model(&ModelData::from_mesh(&shapes::sphere(48)))
+        .map_err(e)?;
+    let wall = world.objects[1];
+    let mut objects = vec![ObjectDraw {
+        transform: Mat4::from_translation(Vec3::new(0.0, 3.0, 0.0))
+            * Mat4::from_scale(Vec3::new(14.0, 6.0, 0.3)),
+        ..wall
+    }];
+    objects.push(world.objects[0]);
+    for i in 0..4000 {
+        let (x, z) = ((i % 80) as f32 * 0.5 - 20.0, (i / 80) as f32 * -0.8 - 2.0);
+        let at = Mat4::from_translation(Vec3::new(x, 0.4 + (i % 7) as f32 * 0.1, z));
+        objects.push(ObjectDraw::new(
+            ball,
+            wall.material,
+            at * Mat4::from_scale(Vec3::splat(0.4)),
+        ));
+    }
+    let make = |objects| World {
+        objects,
+        lights: Vec::new(),
+        logo: world.logo,
+        decals: Vec::new(),
+        meshes: Vec::new(),
+    };
+    // dasselbe ohne Wand: alles, was verdeckt war, muss im selben Bild erscheinen
+    let open = make(objects[1..].to_vec());
+    let crowd = make(objects);
+    let mut images = Vec::new();
+    for on in [false, true] {
+        let case = Case {
+            name: "aussortieren",
+            features: Features {
+                gpu_culling: on,
+                ..Features::default()
+            },
+            night: false,
+        };
+        let path = dir.join(format!("modern_aussortieren_{on}.bmp"));
+        for frame in 0..40 {
+            let last = (frame == 39).then_some(path.as_path());
+            shot(r, &crowd, &case, frame, last).map_err(e)?;
+        }
+        println!("aussortieren {on}: GPU {:.2} ms", r.stats().gpu_ms);
+        images.push(pixels(&path)?);
+        shot(r, &open, &case, 40, Some(&path)).map_err(e)?;
+        images.push(pixels(&path)?);
+    }
+    if difference(&images[0], &images[1]) < 1.0 {
+        return Err("die Wand verdeckt nichts".into());
+    }
+    if difference(&images[0], &images[2]) > 0.001 || difference(&images[1], &images[3]) > 0.001 {
+        return Err("Aussortieren auf der Grafikkarte aendert das Bild".into());
     }
     Ok(())
 }
