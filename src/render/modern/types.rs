@@ -286,12 +286,23 @@ impl Features {
     }
 }
 
+/// Aufkleber: ein Material, das auf alle Flaechen in einem Einheitswuerfel projiziert wird
+/// (entlang der eigenen Hochachse, Bild in x/z).
+#[derive(Clone, Copy, Debug)]
+pub struct DecalDraw {
+    pub material: super::model::MaterialId,
+    pub transform: Mat4,
+    pub tint: glam::Vec4,
+}
+
 /// Moderne Szene eines Bildes. Modelle und Figuren aus `FrameInput` werden mitgezeichnet
 /// (mit [`SceneInput::plain_roughness`]); Beleuchtung und Nebel kommen von hier.
 #[derive(Clone, Copy)]
 pub struct SceneInput<'a> {
     pub camera: Camera,
     pub objects: &'a [ObjectDraw],
+    /// in dieser Reihenfolge uebereinander
+    pub decals: &'a [DecalDraw],
     pub sun: Option<SunLight>,
     pub lights: &'a [Light],
     pub sky: Sky,
@@ -315,6 +326,7 @@ impl SceneInput<'_> {
         Self {
             camera,
             objects: &[],
+            decals: &[],
             sun: Some(SunLight {
                 dir: Vec3::new(0.4, 1.0, 0.3),
                 color: Vec3::new(2.4, 2.2, 1.95),

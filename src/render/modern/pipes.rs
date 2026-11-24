@@ -129,6 +129,7 @@ pub struct Pipes {
     kinds: [KindPipes; 4],
     pub sky: vk::Pipeline,
     pub particle: vk::Pipeline,
+    pub decal: vk::Pipeline,
     pub post: PostPipes,
     /// Bilder der Oberflaeche
     pub image: vk::Pipeline,
@@ -281,6 +282,22 @@ impl Pipes {
                 input_rate: vk::VertexInputRate::INSTANCE,
             }];
             let particle_attrs = [attr(0, 0, F4), attr(1, 16, F4), attr(2, 32, F4)];
+            let decal_bind = vertex_binding(size_of::<Vertex>());
+            let decal_attrs = [attr(0, 0, F3)];
+            // Rueckseiten zeichnen, ohne Tiefenpruefung: geht auch mit der Kamera im Wuerfel
+            let decal = PipelineDesc {
+                color_format: Some(HDR),
+                depth_test: false,
+                depth_write: false,
+                blend: Blend::Alpha,
+                dynamic_cull: true,
+                ..scene_desc(
+                    spv!("m_decal.vert"),
+                    spv!("m_decal.frag"),
+                    &decal_bind,
+                    &decal_attrs,
+                )
+            };
             let sky = PipelineDesc {
                 color_format: Some(HDR),
                 depth_write: false,
@@ -307,6 +324,7 @@ impl Pipes {
                 kinds: [k(KINDS[0])?, k(KINDS[1])?, k(KINDS[2])?, k(KINDS[3])?],
                 sky: create_pipeline(d, layout, &sky)?,
                 particle: create_pipeline(d, layout, &particle)?,
+                decal: create_pipeline(d, layout, &decal)?,
                 post: post_pipes(d, post_layout)?,
                 image: create_pipeline(
                     d,
@@ -352,6 +370,7 @@ impl Pipes {
             p.sharpen,
             self.sky,
             self.particle,
+            self.decal,
         ] {
             d.destroy_pipeline(p, None);
         }

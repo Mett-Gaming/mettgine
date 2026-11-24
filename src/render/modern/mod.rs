@@ -98,6 +98,7 @@ impl FrameBuffers {
 #[derive(Default)]
 struct Views {
     camera: Range<usize>,
+    decals: Range<usize>,
     blend: Range<usize>,
     sun: Vec<(Mat4, Range<usize>)>,
     lamps: Vec<(atlas::Tile, Range<usize>)>,
@@ -263,6 +264,7 @@ impl Modern {
         self.lamp_views(s, lights);
         let vp = cam.view_proj();
         self.views.camera = self.lists.view(&vp, false);
+        self.views.decals = self.lists.decals(s.decals, self.cube.0);
         self.views.blend = self.lists.blended(&vp, cam.pos);
         self.clusters.build(cam, lights);
         let jitter = if s.features.anti_alias == AntiAlias::Taa {

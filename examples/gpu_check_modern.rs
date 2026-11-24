@@ -73,6 +73,7 @@ struct World {
     objects: Vec<ObjectDraw>,
     lights: Vec<Light>,
     logo: TextureId,
+    decals: Vec<DecalDraw>,
     meshes: Vec<MeshDraw>,
 }
 
@@ -178,7 +179,18 @@ fn build(r: &mut Renderer) -> Result<World> {
             shadow: false,
         });
     }
+    let stain = r.add_material(&Material {
+        base_texture: Some(grid),
+        base_color: Vec4::new(1.0, 0.2, 1.0, 0.9),
+        alpha: Alpha::Blend,
+        ..Default::default()
+    })?;
     Ok(World {
+        decals: vec![DecalDraw {
+            material: stain,
+            transform: at(-0.5, 0.0, 3.5, Vec3::new(1.5, 1.0, 1.5)),
+            tint: Vec4::ONE,
+        }],
         logo: color,
         objects,
         lights,
@@ -327,6 +339,7 @@ fn shot(r: &mut Renderer, w: &World, c: &Case, frame: u32, path: Option<&Path>) 
     let eye = Vec3::new(1.0, 3.2, 7.5);
     let mut scene = SceneInput {
         objects: &w.objects,
+        decals: &w.decals,
         lights: &w.lights,
         features: c.features,
         cut: frame == 0,
@@ -442,6 +455,7 @@ fn run(window: &Window, dir: &Path) -> std::result::Result<(), String> {
         objects: many,
         lights: lots,
         logo: world.logo,
+        decals: Vec::new(),
         meshes: Vec::new(),
     };
     for c in all

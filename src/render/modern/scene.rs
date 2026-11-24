@@ -348,6 +348,7 @@ impl Modern {
         d.cmd_draw(cmd, 3, 1, 0, 0);
         self.bind_frame(i, 2);
         self.mark_blended(i, true);
+        self.record_decals(i);
         self.draw(i, Stage::Blend, self.batches(&self.views.blend));
         let (particles, count) = i.particles;
         if count > 0 {
@@ -369,6 +370,23 @@ impl Modern {
         }
         d.cmd_end_rendering(cmd);
         barrier(d, cmd, (out, frag), &[color_read(t.hdr.image)]);
+    }
+
+    unsafe fn record_decals(&self, i: &Inputs) {
+        let (d, cmd) = (&i.ctx.device, i.cmd);
+        let batches = self.batches(&self.views.decals);
+        if batches.is_empty() {
+            return;
+        }
+        d.cmd_bind_pipeline(cmd, GFX, self.pipes.decal);
+        d.cmd_set_cull_mode(cmd, vk::CullModeFlags::FRONT);
+        for (k, b) in batches.iter().enumerate() {
+            if let Some(m) = self.store.material(super::MaterialId(b.material)) {
+                let sets = [m.set];
+                d.cmd_bind_descriptor_sets(cmd, GFX, self.pipes.layout, 1, &sets, &[]);
+                self.draw_batch(i, b, k == 0);
+            }
+        }
     }
 
     /// Sagt den Shadern, ob Werte aus Bildschirm-Durchgaengen gelten.

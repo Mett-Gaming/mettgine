@@ -83,10 +83,6 @@ pub struct AnimSet {
     twitchy: Vec<usize>,
 }
 
-fn hash(x: f32) -> f32 {
-    ((x * 12.9898).sin() * 43_758.547).fract()
-}
-
 impl AnimSet {
     pub(crate) fn new(
         names: Vec<String>,
@@ -206,31 +202,7 @@ impl AnimSet {
                 }
             }
         }
-        // Zucken: kurze, harte Rucke (wechseln mehrmals pro Sekunde)
-        if fx.twitch > 0.0 {
-            let slot = (t * 7.0).floor();
-            for (k, &b) in self.twitchy.iter().enumerate() {
-                let h = hash(slot + fx.seed * 3.1 + k as f32 * 1.7);
-                if h > 1.0 - 0.35 * fx.twitch {
-                    let ax = Vec3::new(
-                        hash(h + 1.0) - 0.5,
-                        hash(h + 2.0) - 0.5,
-                        hash(h + 3.0) - 0.5,
-                    )
-                    .normalize_or_zero();
-                    locals[b].rot *= Quat::from_axis_angle(ax, 0.6 * fx.twitch);
-                }
-            }
-        }
-        // Strecken: Hals und Arme laenger (Knochen-Achse = lokales y)
-        if fx.stretch > 0.0 {
-            if let Some(nk) = self.neck {
-                locals[nk].scale.y *= 1.0 + 1.2 * fx.stretch;
-            }
-            for &a in &self.arms {
-                locals[a].scale.y *= 1.0 + 0.35 * fx.stretch;
-            }
-        }
+        self.distort(t, fx, &mut locals);
         // Hierarchie durchrechnen; Kopf und Hals drehen sich zum Blickziel
         let mut global: Vec<Mat4> = Vec::with_capacity(n);
         for b in 0..n {
@@ -251,17 +223,7 @@ impl AnimSet {
                 }
             }
             if fx.head_roll != 0.0 && Some(b) == self.head {
-                // Kopf um die eigene Blickachse drehen (bis kopfueber)
-                let pivot = g.w_axis.truncate();
-                let axis = (g * self.rest_inv[b])
-                    .transform_vector3(Vec3::Z)
-                    .normalize_or_zero();
-                if axis != Vec3::ZERO {
-                    g = Mat4::from_translation(pivot)
-                        * Mat4::from_quat(Quat::from_axis_angle(axis, fx.head_roll))
-                        * Mat4::from_translation(-pivot)
-                        * g;
-                }
+                g = roll_head(g, &self.rest_inv[b], fx.head_roll);
             }
             global.push(g);
         }
@@ -271,10 +233,12 @@ impl AnimSet {
 
 mod animator;
 mod file;
+mod fx;
 mod graph;
 mod look;
 pub use animator::Animator;
 pub use file::parse_anim;
+use fx::roll_head;
 pub use graph::{AnimState, Mask, Pose, StateMachine};
 use look::look_towards;
 

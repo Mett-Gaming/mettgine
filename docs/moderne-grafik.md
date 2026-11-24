@@ -24,6 +24,7 @@ Modelle (`MeshDraw`), Figuren (`SkinDraw`), feste Modelle und Welt-Boxen werden 
 | `ssao`, `bloom`, `fog` | Verdeckung in Ecken, Überstrahlen, Höhennebel |
 | `anti_alias` | FXAA oder TAA |
 | `render_scale`, `sharpen` | Szene kleiner rechnen und mit TAA hochskalieren; nachschärfen |
+| – (`SceneInput::decals`) | Aufkleber auf Flächen |
 | `ray_tracing` | Schatten, Verdeckung, Streulicht, Spiegelungen aus Strahlen |
 | `path_tracing` | das ganze Bild aus Strahlen |
 

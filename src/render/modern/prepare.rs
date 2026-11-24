@@ -315,6 +315,34 @@ impl Lists {
         start..self.batches.len()
     }
 
+    /// Aufkleber in ihrer Reihenfolge, gleiche Materialien hintereinander zusammen.
+    pub fn decals(&mut self, decals: &[DecalDraw], cube: u32) -> Range<usize> {
+        let start = self.batches.len();
+        for d in decals {
+            let key = Key {
+                kind: Kind::Object,
+                masked: false,
+                double_sided: false,
+                material: d.material.0,
+                model: cube,
+            };
+            self.order.push(self.objs.len() as u32);
+            self.objs.push(GpuObj {
+                model: d.transform.to_cols_array_2d(),
+                prev: d.transform.inverse().to_cols_array_2d(),
+                tint: d.tint.to_array(),
+                extra: [0.0, d.material.0 as f32, 0.0, 0.0],
+            });
+            let same = |b: &Batch| b.material == key.material;
+            let grow = self.batches.len() > start && self.batches.last().is_some_and(same);
+            match self.batches.last_mut() {
+                Some(b) if grow => b.count += 1,
+                _ => self.batches.push(batch(key, self.order.len() as u32 - 1)),
+            }
+        }
+        start..self.batches.len()
+    }
+
     /// Halbtransparentes von hinten nach vorn.
     pub fn blended(&mut self, view_proj: &Mat4, eye: Vec3) -> Range<usize> {
         let frustum = Frustum::new(view_proj);

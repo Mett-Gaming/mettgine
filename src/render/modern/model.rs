@@ -238,9 +238,37 @@ impl ObjectDraw {
     }
 }
 
+/// Dasselbe Ding in mehreren Feinheiten.
+#[derive(Clone, Debug, Default)]
+pub struct Lod {
+    /// (bis zu dieser Entfernung in Metern, Modell), aufsteigend
+    levels: Vec<(f32, ModelId)>,
+}
+
+impl Lod {
+    pub fn new(mut levels: Vec<(f32, ModelId)>) -> Self {
+        levels.sort_by(|a, b| a.0.total_cmp(&b.0));
+        Self { levels }
+    }
+
+    /// Modell fuer eine Entfernung; `None` = zu weit weg, gar nicht zeichnen.
+    pub fn pick(&self, distance: f32) -> Option<ModelId> {
+        let l = self.levels.iter().find(|l| distance <= l.0)?;
+        Some(l.1)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lod_picks_by_distance() {
+        let l = Lod::new(vec![(80.0, ModelId(2)), (20.0, ModelId(1))]);
+        assert_eq!(l.pick(5.0), Some(ModelId(1)));
+        assert_eq!(l.pick(50.0), Some(ModelId(2)));
+        assert_eq!(l.pick(100.0), None);
+    }
 
     #[test]
     fn tangents_follow_the_texture_axes() {
