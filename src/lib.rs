@@ -3,6 +3,7 @@
 //! - `render`: der eine Vulkan-Renderer: Welt-Boxen mit Lampen, Sonne mit Schattenkarte,
 //!   Modelle, animierte Figuren, Hologramme, Partikel, zweite Kamera, UI, Nachbearbeitung.
 //!   Die Shader liegen in `shaders/`. Dazu `particles`, `cull`, `splash`.
+//! - `app`: Spielgeruest (Fenster, Ereignisse, Bildtakt). `time`: fester Takt.
 //! - `collide`: Kollision und Strahlen. `profile`: Messanzeige.
 //! - `audio`, `input`, `canvas`, `text`, `settings`: Klang, Eingabe, Menues, Einstellungen.
 //! - `presence`: Status fuer den Mett Launcher (Discord-Anzeige).
@@ -13,6 +14,7 @@
 //! - `crash`, `crash_window`: Protokoll, Absturzberichte und Absturzfenster.
 
 pub mod anim;
+pub mod app;
 pub mod audio;
 pub mod canvas;
 pub mod collide;
@@ -29,4 +31,5 @@ pub mod render;
 pub mod settings;
 mod splash;
 pub mod text;
+pub mod time;
 pub mod ui;
