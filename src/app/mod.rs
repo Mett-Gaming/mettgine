@@ -31,7 +31,7 @@ pub struct AppConfig {
     pub max_dt: f32,
     /// Eingaben verfallen, solange das Startbild laeuft
     pub block_input_on_splash: bool,
-    /// Fenster anzeigen (aus: Pruefprogramme)
+    /// Fenster anzeigen (aus: Pruefprogramme; auch mit `METTGINE_HIDDEN=1`)
     pub visible: bool,
 }
 
@@ -45,7 +45,7 @@ impl AppConfig {
             size: (1280.0, 720.0),
             max_dt: 0.1,
             block_input_on_splash: true,
-            visible: true,
+            visible: std::env::var_os("METTGINE_HIDDEN").is_none(),
         }
     }
 }

@@ -4,6 +4,7 @@
 //!   Modelle, animierte Figuren, Hologramme, Partikel, zweite Kamera, UI, Nachbearbeitung.
 //!   Die Shader liegen in `shaders/`. Dazu `particles`, `cull`, `splash`.
 //! - `app`: Spielgeruest (Fenster, Ereignisse, Bildtakt). `time`: fester Takt.
+//! - `shapes`: einfache Formen als Modelle.
 //! - `collide`: Kollision und Strahlen. `profile`: Messanzeige.
 //! - `audio`, `input`, `canvas`, `text`, `settings`: Klang, Eingabe, Menues, Einstellungen.
 //! - `presence`: Status fuer den Mett Launcher (Discord-Anzeige).
@@ -29,6 +30,7 @@ pub mod presence;
 pub mod profile;
 pub mod render;
 pub mod settings;
+pub mod shapes;
 mod splash;
 pub mod text;
 pub mod time;

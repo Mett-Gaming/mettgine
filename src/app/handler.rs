@@ -161,8 +161,14 @@ impl<G: Game> ApplicationHandler for Handler<G> {
         }
     }
 
-    fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
-        if let Some(s) = &self.stage {
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        // Unsichtbare Fenster bekommen von Windows keine Zeichen-Ereignisse
+        if !self.config.visible {
+            self.redraw();
+            if self.stage.as_ref().is_some_and(Stage::quitting) {
+                event_loop.exit();
+            }
+        } else if let Some(s) = &self.stage {
             s.window.request_redraw();
         }
     }

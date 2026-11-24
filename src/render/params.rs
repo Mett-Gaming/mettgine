@@ -256,6 +256,71 @@ pub struct FrameInput<'a> {
     pub ui: &'a [UiVertex],
 }
 
+impl Default for Sun {
+    /// Klarer Tag: Sonne schraeg von oben, Schatten im Umkreis von 30 m um den Ursprung.
+    fn default() -> Self {
+        Self {
+            dir: Vec3::new(0.4, 1.0, 0.3),
+            color: Vec3::new(1.0, 0.95, 0.85),
+            shadow_center: Vec3::ZERO,
+            shadow_radius: 30.0,
+            shadow_strength: 0.8,
+            sky_top: Vec3::new(0.35, 0.55, 0.9),
+            horizon: Vec3::new(0.75, 0.83, 0.92),
+            fog_density: 0.004,
+            ground: Vec3::new(0.25, 0.23, 0.2),
+        }
+    }
+}
+
+impl Default for Clean {
+    /// Keine Blenden, normale Saettigung.
+    fn default() -> Self {
+        Self {
+            fade: 0.0,
+            red: 0.0,
+            saturation: 1.0,
+        }
+    }
+}
+
+impl Default for FrameInput<'_> {
+    /// Leeres Bild bei Tageslicht, Blick vom Ursprung nach -z.
+    fn default() -> Self {
+        Self {
+            view: View {
+                view_proj: perspective(1.1, 16.0 / 9.0, 0.1, 500.0),
+                pos: Vec3::ZERO,
+            },
+            second_camera: None,
+            time: 0.0,
+            lighting: Lighting::Sun(Sun::default()),
+            post: Post::Clean(Clean::default()),
+            meshes: &[],
+            ghosts: &[],
+            skins: &[],
+            camera_skins: &[],
+            bones: &[],
+            ui: &[],
+        }
+    }
+}
+
+impl FrameInput<'_> {
+    /// Leeres Bild bei Tageslicht, Blick von `eye` auf `target` (Bildwinkel 60 Grad).
+    /// `aspect` = Breite / Hoehe des Fensters.
+    pub fn looking(eye: Vec3, target: Vec3, aspect: f32) -> Self {
+        let proj = perspective(std::f32::consts::FRAC_PI_3, aspect, 0.1, 500.0);
+        Self {
+            view: View {
+                view_proj: proj * Mat4::look_at_rh(eye, target, Vec3::Y),
+                pos: eye,
+            },
+            ..Self::default()
+        }
+    }
+}
+
 /// Perspektive (`fov_y` in Radiant). naga uebersetzt die Shader mit der y-Drehung von WebGPU:
 /// NDC y = +1 ist oben im Bild, wie bei OpenGL. Darum genuegt `Mat4::perspective_rh` ohne
 /// Spiegeln; Nachbearbeitung, UI und Schattenkarte rechnen mit derselben Regel.

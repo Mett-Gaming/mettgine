@@ -5,6 +5,7 @@ use super::pipelines::create_pipelines;
 use super::transfer::{halve_r8, one_shot, upload_mips, upload_r8};
 use super::util::{image_barrier, ImageDesc};
 use super::*;
+use crate::gpu::MeshData;
 use std::mem::size_of;
 use winit::window::Window;
 
@@ -154,6 +155,12 @@ impl UiLayer {
 }
 
 impl Renderer {
+    /// Renderer mit Vorgaben: nur Modelle, keine Figuren, eingebaute Bitmap-Schrift (`ui`).
+    pub fn simple(window: &Window, meshes: &[MeshData]) -> Result<Self> {
+        let font = crate::ui::font_atlas();
+        Self::new(window, &Config::new(meshes, &[], (&font, 128, 128)))
+    }
+
     /// Baut den Renderer fuer `window`.
     pub fn new(window: &Window, cfg: &Config) -> Result<Self> {
         let size = window.inner_size();
