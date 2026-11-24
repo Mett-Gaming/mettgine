@@ -67,6 +67,14 @@ enum Opt {
     Particles,
     Decals,
     Vsync,
+    RayLamps,
+    GpuCulling,
+    Upscale,
+    Reconstruct,
+    Generate,
+    Latency,
+    Limit,
+    Hdr,
 }
 
 fn menu() -> Menu<Opt> {
@@ -99,6 +107,7 @@ fn menu() -> Menu<Opt> {
         on(Opt::RayAo, "Strahlen: Verdeckung", false),
         on(Opt::RayIndirect, "Strahlen: Streulicht", false),
         on(Opt::RayMirror, "Strahlen: Spiegelung", false),
+        on(Opt::RayLamps, "Strahlen: Lampen", false),
         on(Opt::Paths, "Pathtracing", false),
         on(Opt::Accumulate, "Pfade bei Stillstand mitteln", false),
         on(Opt::AutoExposure, "Belichtung automatisch", false),
@@ -106,6 +115,28 @@ fn menu() -> Menu<Opt> {
         on(Opt::Decals, "Aufkleber", true),
         on(Opt::Vsync, "An Bildschirm binden", true),
         on(Opt::Night, "Nacht", false),
+        on(Opt::GpuCulling, "Aussortieren auf der Grafikkarte", false),
+        choice(
+            Opt::Upscale,
+            "Hochskalieren",
+            &["eigenes", "DLSS", "FSR", "XeSS"],
+            0,
+        ),
+        on(Opt::Reconstruct, "Ray Reconstruction", false),
+        choice(
+            Opt::Generate,
+            "Bilderzeugung",
+            &["aus", "2x", "3x", "4x"],
+            0,
+        ),
+        choice(
+            Opt::Latency,
+            "Verzögerung verringern",
+            &["aus", "an", "verstärkt"],
+            0,
+        ),
+        choice(Opt::Limit, "Bildgrenze", &["keine", "60", "120"], 0),
+        on(Opt::Hdr, "HDR-Ausgabe", false),
     ])
 }
 
@@ -117,6 +148,10 @@ struct Demo {
     particles: bool,
     decals: bool,
     vsync: bool,
+    generate: u32,
+    latency: LowLatency,
+    limit: f32,
+    hdr: bool,
     cam: FirstPerson,
     physics: Physics,
     step: FixedStep,
@@ -161,6 +196,10 @@ impl Demo {
             particles: true,
             decals: true,
             vsync: true,
+            generate: 0,
+            latency: LowLatency::Off,
+            limit: 0.0,
+            hdr: false,
             cam: FirstPerson {
                 pos: Vec3::new(0.0, 2.0, 10.0),
                 ..Default::default()
@@ -222,6 +261,10 @@ impl Demo {
                 Opt::Particles => self.particles = on,
                 Opt::Decals => self.decals = on,
                 Opt::Vsync => self.vsync = on,
+                Opt::RayLamps => f.ray_tracing.lamps = on,
+                Opt::GpuCulling => f.gpu_culling = on,
+                Opt::Reconstruct => f.ray_reconstruction = on,
+                Opt::Hdr => self.hdr = on,
                 Opt::Accumulate => {
                     f.path_tracing = Some(PathTracing {
                         accumulate: on,
@@ -247,6 +290,14 @@ impl Demo {
             Event::Chosen(Opt::Tonemap, i) => {
                 f.tonemap = [Tonemap::None, Tonemap::Aces, Tonemap::Agx][i]
             }
+            Event::Chosen(Opt::Upscale, i) => {
+                f.upscaler = [Upscaler::Own, Upscaler::Dlss, Upscaler::Fsr, Upscaler::Xess][i]
+            }
+            Event::Chosen(Opt::Generate, i) => self.generate = i as u32,
+            Event::Chosen(Opt::Latency, i) => {
+                self.latency = [LowLatency::Off, LowLatency::On, LowLatency::Boost][i]
+            }
+            Event::Chosen(Opt::Limit, i) => self.limit = [0.0, 60.0, 120.0][i],
             Event::Slid(Opt::Scale, v) => f.render_scale = v,
             Event::Slid(Opt::Sharpen, v) => f.sharpen = v,
             Event::Back => self.open = false,
@@ -305,6 +356,12 @@ impl Game for Demo {
         let font = &self.canvas.font;
         let config = Config {
             ray_tracing: true,
+            upscalers: &[Upscaler::Dlss, Upscaler::Fsr, Upscaler::Xess],
+            frame_generation: true,
+            low_latency: true,
+            gpu_culling: true,
+            hdr_output: true,
+            diagnostics: true,
             ..Config::new(&[], &[], (&font.pixels, font.width, font.height))
         };
         Renderer::new(window, &config)
@@ -394,16 +451,32 @@ impl Game for Demo {
                 .collect();
             stage.renderer.queue_particles(&smoke);
         }
-        stage.renderer.set_vsync(self.vsync);
+        let r = &mut stage.renderer;
+        // Bilderzeugung geht nur ohne Bindung an den Bildschirm
+        r.set_vsync(self.vsync && self.generate == 0);
+        r.set_frame_generation(self.generate);
+        r.set_low_latency(self.latency);
+        r.set_fps_limit(self.limit);
+        r.set_hdr_output(self.hdr);
         self.meter.push(dt, &stage.renderer.stats());
         let (w, h) = stage.renderer.ui_area();
         self.canvas.begin(w, h);
-        draw_overlay(&mut self.canvas, 8.0, 8.0, 14.0, &self.meter.lines());
+        let mut lines = self.meter.lines();
+        if let Some(g) = stage.renderer.frame_generation() {
+            lines.push(format!(
+                "Bilderzeugung: {} gezeigt, Status {}",
+                g.presented, g.status
+            ));
+        }
+        if let Some(l) = stage.renderer.latency_report() {
+            lines.push(format!("Verzögerung {:.1} ms", l.total_ms));
+        }
+        draw_overlay(&mut self.canvas, 8.0, 8.0, 14.0, &lines);
         if self.open {
             let c = &mut self.canvas;
-            c.rect(w - 460.0, 40.0, 440.0, 21.0 * 30.0, [0.0, 0.0, 0.0, 0.75]);
+            c.rect(w - 460.0, 40.0, 440.0, 30.0 * 22.0, [0.0, 0.0, 0.0, 0.75]);
             self.menu
-                .draw(c, w - 450.0, 50.0, 420.0, 30.0, &Style::default());
+                .draw(c, w - 450.0, 50.0, 420.0, 22.0, &Style::default());
         }
         stage.draw(&FrameInput {
             time: self.time,

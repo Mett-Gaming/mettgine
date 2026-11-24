@@ -86,7 +86,49 @@ fn change(
     image_barrier(image, aspect, from, to, write, read)
 }
 
+fn picture(g: &GpuImage, format: vk::Format, extent: vk::Extent2D) -> Picture {
+    Picture {
+        image: g.image,
+        view: g.view,
+        format,
+        extent,
+    }
+}
+
 impl Modern {
+    /// Bilder und Kamera dieses Bildes fuer die Techniken.
+    pub(super) fn job(
+        &self,
+        i: &Inputs,
+        s: &SceneInput,
+        (before, jitter): (glam::Mat4, Vec2),
+    ) -> Option<Job> {
+        let t = self.targets.as_ref()?;
+        Some(Job {
+            cmd: i.cmd,
+            fi: i.fi,
+            color: picture(&t.hdr, HDR, i.extent),
+            depth: picture(&t.depth, super::super::DEPTH_FORMAT, i.extent),
+            motion: picture(&t.motion, MOTION, i.extent),
+            reactive: t.reactive.as_ref().map(|r| picture(r, REACTIVE, i.extent)),
+            output: match &t.upscaled {
+                Some(out) => picture(out, HDR, i.out),
+                None => picture(&t.hdr, HDR, i.extent),
+            },
+            guides: t.guides.as_ref().map(|[albedo, specular, normal]| Guides {
+                albedo: picture(albedo, GUIDE, i.extent),
+                specular: picture(specular, GUIDE, i.extent),
+                normal: picture(normal, NORMAL, i.extent),
+            }),
+            // so viele Bildpunkte wandert die Szene nach rechts und unten
+            jitter: Vec2::new(jitter.x, -jitter.y),
+            dt: s.dt,
+            camera: s.camera,
+            before,
+            reset: s.cut || !self.history_valid,
+        })
+    }
+
     /// Szenenbild hochskalieren; `None` = die Technik hat versagt, das Szenenbild gilt.
     ///
     /// # Safety
@@ -101,12 +143,6 @@ impl Modern {
         let t = self.targets.as_ref()?;
         let out = t.upscaled.as_ref()?;
         let backend = upscale.get(i.ctx, s.features.upscaler)?;
-        let picture = |g: &GpuImage, format, extent| Picture {
-            image: g.image,
-            view: g.view,
-            format,
-            extent,
-        };
         let (d, cmd) = (&i.ctx.device, i.cmd);
         let (color, depth) = (vk::ImageAspectFlags::COLOR, vk::ImageAspectFlags::DEPTH);
         let (read, write) = (vk::AccessFlags::SHADER_READ, vk::AccessFlags::SHADER_WRITE);
@@ -132,26 +168,7 @@ impl Modern {
             | vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT
             | vk::PipelineStageFlags::LATE_FRAGMENT_TESTS;
         barrier(d, cmd, (before_stages, COMPUTE), &images);
-        let job = Job {
-            cmd,
-            fi: i.fi,
-            color: picture(&t.hdr, HDR, i.extent),
-            depth: picture(&t.depth, super::super::DEPTH_FORMAT, i.extent),
-            motion: picture(&t.motion, MOTION, i.extent),
-            reactive: t.reactive.as_ref().map(|r| picture(r, REACTIVE, i.extent)),
-            output: picture(out, HDR, i.out),
-            guides: t.guides.as_ref().map(|[albedo, specular, normal]| Guides {
-                albedo: picture(albedo, GUIDE, i.extent),
-                specular: picture(specular, GUIDE, i.extent),
-                normal: picture(normal, NORMAL, i.extent),
-            }),
-            // so viele Bildpunkte wandert die Szene nach rechts und unten
-            jitter: Vec2::new(jitter.x, -jitter.y),
-            dt: s.dt,
-            camera: s.camera,
-            before,
-            reset: s.cut || !self.history_valid,
-        };
+        let job = self.job(i, s, (before, jitter))?;
         let result = backend.evaluate(i.ctx, &job);
         let images = [
             change(

@@ -163,6 +163,19 @@ impl Renderer {
         self.bind_tex(cmd, pipe, self.desc.post);
         self.push(cmd, &values);
         d.cmd_draw(cmd, 3, 1, 0, 0);
+        if let Some(g) = self.keeps_hudless() {
+            d.cmd_end_rendering(cmd);
+            g.keep(d, cmd, self.swapchain.images[image]);
+            let att = [att[0].load_op(vk::AttachmentLoadOp::LOAD)];
+            d.cmd_begin_rendering(
+                cmd,
+                &vk::RenderingInfo::default()
+                    .render_area(area(extent))
+                    .layer_count(1)
+                    .color_attachments(&att),
+            );
+            set_viewport(d, cmd, extent);
+        }
         if let Some(m) = self.modern.as_deref().filter(|_| !f.images.is_empty()) {
             modern::record_images(m, d, (cmd, fi), self.ui_area(), f.images);
         }

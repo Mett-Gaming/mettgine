@@ -140,6 +140,11 @@ impl Renderer {
             extent: self.offscreen,
             out: self.offscreen,
             headroom: self.headroom(),
+            generation: self
+                .generator
+                .as_ref()
+                .map(|g| g.gen.clone())
+                .filter(|g| g.frames() > 0),
             color: self.color.image,
             color_view: self.color.view,
             bones: &self.bone_bufs[fi],

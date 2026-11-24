@@ -11,6 +11,11 @@ mod streamline;
 #[cfg(feature = "xess")]
 mod xess;
 
+#[cfg(not(feature = "streamline"))]
+pub(crate) use no_generation::Generation;
+#[cfg(feature = "streamline")]
+pub(crate) use streamline::Generation;
+
 use super::context::Context;
 use super::Result;
 use ash::vk;
@@ -133,8 +138,9 @@ pub(crate) struct Vendors {
 }
 
 impl Vendors {
-    pub fn load(wanted: &[Upscaler]) -> Self {
-        let _ = wanted;
+    /// `generation` = Bilderzeugung mitladen.
+    pub fn load(wanted: &[Upscaler], generation: bool) -> Self {
+        let _ = (wanted, generation);
         Self {
             #[cfg(feature = "fsr")]
             fsr: wanted
@@ -147,9 +153,8 @@ impl Vendors {
                 .then(xess::Api::load)
                 .flatten(),
             #[cfg(feature = "streamline")]
-            streamline: wanted
-                .contains(&Upscaler::Dlss)
-                .then(streamline::Api::load)
+            streamline: (wanted.contains(&Upscaler::Dlss) || generation)
+                .then(|| streamline::Api::load(generation))
                 .flatten(),
         }
     }
@@ -230,6 +235,16 @@ impl Vendors {
         chain
     }
 
+    /// Bilderzeugung fuer dieses Geraet. `None` = geht hier nicht.
+    pub fn generation(&self, physical: vk::PhysicalDevice) -> Option<std::rc::Rc<Generation>> {
+        let _ = physical;
+        #[cfg(feature = "streamline")]
+        if let Some(s) = &self.streamline {
+            return Generation::new(s, physical).map(std::rc::Rc::new);
+        }
+        None
+    }
+
     /// Technik fuer dieses Geraet anlegen. `None` = geht hier nicht.
     pub fn create(&self, ctx: &Context, which: Upscaler) -> Option<Box<dyn Backend>> {
         let _ = ctx;
@@ -241,6 +256,49 @@ impl Vendors {
             #[cfg(feature = "streamline")]
             Upscaler::Dlss => self.streamline.as_ref().and_then(|a| a.create(ctx)),
             _ => None,
+        }
+    }
+}
+
+/// Ohne Streamline gibt es keine Bilderzeugung; gleiche Aufrufe, nie angelegt.
+#[cfg(not(feature = "streamline"))]
+mod no_generation {
+    use super::{Job, Picture};
+    use ash::vk;
+
+    pub enum Generation {}
+
+    #[allow(dead_code, clippy::missing_safety_doc)]
+    impl Generation {
+        pub fn max(&self) -> u32 {
+            match *self {}
+        }
+        pub fn frames(&self) -> u32 {
+            match *self {}
+        }
+        pub fn set_frames(&self, _: u32) {
+            match *self {}
+        }
+        pub fn apply(&self, _: bool) {
+            match *self {}
+        }
+        pub fn begin(&self, _: f32, _: bool) {
+            match *self {}
+        }
+        pub fn mark(&self, _: vk::LatencyMarkerNV) {
+            match *self {}
+        }
+        pub unsafe fn scene(&self, _: &Job) {
+            match *self {}
+        }
+        pub unsafe fn hudless(&self, _: vk::CommandBuffer, _: &Picture) {
+            match *self {}
+        }
+        pub fn presented(&self) {
+            match *self {}
+        }
+        pub fn state(&self) -> (u32, u32) {
+            match *self {}
         }
     }
 }
@@ -264,7 +322,7 @@ mod tests {
 
     #[test]
     fn nothing_is_loaded_unless_wanted() {
-        let v = Vendors::load(&[]);
+        let v = Vendors::load(&[], false);
         assert!(!v.any() && v.instance_extensions().is_empty());
         assert!((Quality::Quality.scale() - 0.6667).abs() < 0.001);
     }

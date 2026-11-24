@@ -15,6 +15,7 @@ const GPU_ENV: &str = "METTGINE_GPU";
 pub struct Want {
     pub ray_tracing: bool,
     pub low_latency: bool,
+    pub frame_generation: bool,
     pub diagnostics: bool,
     pub hdr: bool,
     pub gpu_culling: bool,
@@ -140,6 +141,11 @@ unsafe fn supports_rt(instance: &ash::Instance, pd: vk::PhysicalDevice, ext: &Ex
         && yes(query.ray_query)
 }
 
+/// Uebernimmt eine Technik der Hersteller auch Reflex?
+fn full_reflex(vendors: &Vendors) -> bool {
+    vendors.vulkan().is_some()
+}
+
 /// Legt das Geraet an.
 ///
 /// # Safety
@@ -162,7 +168,11 @@ pub unsafe fn create(
     if use_rt {
         names.extend(RT_EXTENSIONS.map(CStr::as_ptr));
     }
-    let plan = latency::Plan::new(instance, physical, &ext, want.low_latency);
+    let mut plan = latency::Plan::new(instance, physical, &ext, want.low_latency);
+    if want.frame_generation && full_reflex(vendors) {
+        // dann fuehrt Streamline Reflex, nie beide
+        plan.reflex = false;
+    }
     names.extend(plan.extensions().iter().map(|n| n.as_ptr()));
     let fault = want.diagnostics && super::diagnostics::can_fault(instance, physical, &ext);
     if fault {

@@ -164,6 +164,8 @@ pub(crate) struct Inputs<'a> {
     pub extent: vk::Extent2D,
     /// Aufloesung des Ziels
     pub out: vk::Extent2D,
+    /// laufende Bilderzeugung
+    pub generation: Option<std::rc::Rc<super::vendor::Generation>>,
     /// so viel heller als Weiss darf es werden (1 = SDR)
     pub headroom: f32,
     /// Ziel: das Szenenbild des Renderers
@@ -314,6 +316,9 @@ impl Modern {
         let mut post = post::Post::new(self, i, s);
         post.used = used;
         post.reactive_mask();
+        if let (Some(g), Some(job)) = (&i.generation, self.job(i, s, (old, jitter))) {
+            g.scene(&job);
+        }
         let hdr = match self.upscale(i, s, upscale, (old, jitter)) {
             Some(view) => view,
             None => post.taa(),

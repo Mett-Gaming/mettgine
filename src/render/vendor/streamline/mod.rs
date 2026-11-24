@@ -2,6 +2,9 @@
 //! Vulkan-Einsprungpunkte kommen dann aus dem Interposer, er richtet Geraet und Queues mit ein.
 
 mod abi;
+mod generate;
+
+pub use generate::Generation;
 
 use super::super::context::Context;
 use super::super::Result;
@@ -9,10 +12,12 @@ use super::library::{self, Library};
 use super::{Backend, Job, Picture};
 use abi::*;
 use ash::vk;
+use std::cell::Cell;
 use std::ffi::{c_char, c_void, CStr, CString};
 use std::os::raw::c_int;
 use std::path::PathBuf;
 use std::ptr;
+use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 const DLL: &str = "sl.interposer.dll";
@@ -25,9 +30,37 @@ const MODES: [(f32, u32); 5] = [(1.0, 6), (1.5, 3), (1.72, 2), (2.0, 1), (3.0, 4
 /// Streamline laesst sich je Prozess nur einmal benutzen.
 static IN_USE: AtomicBool = AtomicBool::new(false);
 
+/// Was DLSS und Bilderzeugung in einem Bild teilen.
+#[derive(Default)]
+pub struct Shared {
+    token: Cell<Token>,
+    frame: Cell<u32>,
+    /// die Kamera dieses Bildes ist schon gesetzt
+    constants: Cell<bool>,
+    /// die Bilderzeugung vergibt die Bildnummern
+    driven: Cell<bool>,
+}
+
+impl Shared {
+    /// Naechste Bildnummer.
+    fn next(&self, api: &Api) -> Token {
+        let n = self.frame.get().wrapping_add(1);
+        self.frame.set(n);
+        let mut token: Token = ptr::null_mut();
+        // SAFETY: gueltige Ausgabe.
+        if unsafe { (api.token)(&mut token, &n) } != OK {
+            token = ptr::null_mut();
+        }
+        self.token.set(token);
+        self.constants.set(false);
+        token
+    }
+}
+
 /// Geladene Funktionen.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct Api {
+    shared: Rc<Shared>,
     shutdown: Shutdown,
     is_supported: IsSupported,
     evaluate: Evaluate,
@@ -54,25 +87,28 @@ pub fn vulkan_path() -> Option<PathBuf> {
 
 impl Api {
     /// Laedt und startet Streamline; muss vor dem Anlegen der Vulkan-Instanz geschehen.
-    pub fn load() -> Option<Self> {
+    ///
+    /// `generation` = Bilderzeugung mitladen.
+    pub fn load(generation: bool) -> Option<Self> {
         let path = vulkan_path()?;
         if IN_USE.swap(true, Ordering::SeqCst) {
             crate::crash::log("Streamline ist schon in Benutzung");
             return None;
         }
-        let api = Self::start(&path);
+        let api = Self::start(&path, generation);
         if api.is_none() {
             IN_USE.store(false, Ordering::SeqCst);
         }
         api
     }
 
-    fn start(path: &std::path::Path) -> Option<Self> {
+    fn start(path: &std::path::Path, generation: bool) -> Option<Self> {
         let lib = Library::load(DLL)?;
         // SAFETY: Typen nach `sl_core_api.h`.
         unsafe {
             let init: Init = lib.get(c"slInit")?;
             let api = Self {
+                shared: Rc::default(),
                 shutdown: lib.get(c"slShutdown")?,
                 is_supported: lib.get(c"slIsFeatureSupported")?,
                 evaluate: lib.get(c"slEvaluateFeature")?,
@@ -83,7 +119,10 @@ impl Api {
                 function: lib.get(c"slGetFeatureFunction")?,
                 token: lib.get(c"slGetNewFrameToken")?,
             };
-            let features = [FEATURE_DLSS, FEATURE_RR];
+            let mut features = vec![FEATURE_DLSS, FEATURE_RR];
+            if generation {
+                features.extend(generate::FEATURES);
+            }
             let folder = path.parent()?.to_string_lossy().into_owned();
             let folder: Vec<u16> = folder.encode_utf16().chain([0]).collect();
             let folders = [folder.as_ptr()];
@@ -134,11 +173,10 @@ impl Api {
             (self.version)(FEATURE_DLSS, &mut v);
             let [a, b, c] = v.ngx;
             Some(Box::new(Dlss {
-                api: *self,
+                api: self.clone(),
                 set_dlss,
                 set_rr,
                 viewport: Viewport::new(VIEWPORT),
-                frame: 0,
                 name: format!("DLSS {a}.{b}.{c}"),
                 used: [false; 2],
             }))
@@ -157,7 +195,6 @@ struct Dlss {
     set_dlss: SetDlss,
     set_rr: Option<SetRr>,
     viewport: Viewport,
-    frame: u32,
     name: String,
     /// DLSS, Ray Reconstruction haben Speicher belegt
     used: [bool; 2],
@@ -215,14 +252,19 @@ impl Backend for Dlss {
     unsafe fn evaluate(&mut self, _ctx: &Context, job: &Job) -> Result<()> {
         let size = |p: &Picture| [p.extent.width, p.extent.height];
         let (render, out) = (size(&job.color), size(&job.output));
-        self.frame = self.frame.wrapping_add(1);
-        let mut token: Token = ptr::null_mut();
-        check("Bildnummer", (self.api.token)(&mut token, &self.frame))?;
-        let c = constants(job);
-        check(
-            "Kamera",
-            (self.api.set_constants)(&c, token, &self.viewport),
-        )?;
+        let shared = &self.api.shared;
+        let mut token = shared.token.get();
+        if !shared.driven.get() || token.is_null() {
+            token = shared.next(&self.api);
+        }
+        if token.is_null() {
+            return Err("DLSS: keine Bildnummer".into());
+        }
+        if !shared.constants.replace(true) {
+            let c = constants(job);
+            let r = (self.api.set_constants)(&c, token, &self.viewport);
+            check("Kamera", r)?;
+        }
         let m = mode(render, out);
         let guides = job.guides.filter(|_| self.set_rr.is_some());
         let feature = match (guides, self.set_rr) {

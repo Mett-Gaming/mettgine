@@ -308,7 +308,7 @@ impl Modern {
         self.draw_camera(i, stage, list..list + 1);
         // nur wer den Verlauf nutzt, braucht die Bewegung des Himmels
         let last = list == 1 || !self.gpu_cull;
-        if last && t.wants.temporal() {
+        if last && (t.wants.temporal() || i.generation.is_some()) {
             let sky = self.pipes.sky_guides.filter(|_| t.wants.guides);
             d.cmd_bind_pipeline(cmd, GFX, sky.unwrap_or(self.pipes.sky_move));
             self.bind_any_material(i);

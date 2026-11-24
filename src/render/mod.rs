@@ -20,6 +20,7 @@ pub(crate) mod cache;
 pub(crate) mod context;
 mod device;
 mod diagnostics;
+mod generation;
 mod hdr;
 mod latency;
 pub(crate) mod pipeline;
@@ -46,6 +47,7 @@ mod tests;
 mod vendor;
 mod world;
 
+pub use generation::FrameGeneration;
 pub use hdr::HdrLevels;
 pub use latency::{LatencyReport, LatencyTech, LowLatency};
 pub use modern::{MAX_UI_IMAGES, *};
@@ -254,6 +256,7 @@ pub struct Renderer {
     needs_recreate: bool,
     capture: Capture,
     latency: Latency,
+    generator: Option<generation::Generator>,
     /// Techniken der Hersteller
     upscale: modern::Upscale,
     /// Zwischenbild der HDR-Ausgabe, nur mit `Config::hdr_output`
@@ -380,7 +383,10 @@ impl Drop for Renderer {
             }
             self.capture.destroy(d);
             self.latency.destroy(d);
-            self.upscale.destroy(&self.ctx);
+            if let Some(g) = self.generator.take() {
+                g.gen.set_frames(0);
+                g.destroy(d);
+            }
             if let Some(h) = &self.hdr {
                 h.destroy(d);
             }
@@ -405,6 +411,7 @@ impl Drop for Renderer {
                 i.destroy(d);
             }
             self.swapchain.destroy(&self.ctx);
+            self.upscale.destroy(&self.ctx);
         }
     }
 }

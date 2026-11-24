@@ -35,7 +35,7 @@ pub struct Base {
 }
 
 /// Kennung aus ihren drei Teilen (wie im Quelltext der Beschreibung).
-const fn id(a: u32, b: u16, c: u16, d: [u8; 8]) -> [u32; 4] {
+pub const fn id(a: u32, b: u16, c: u16, d: [u8; 8]) -> [u32; 4] {
     [
         a,
         b as u32 | (c as u32) << 16,
@@ -44,7 +44,7 @@ const fn id(a: u32, b: u16, c: u16, d: [u8; 8]) -> [u32; 4] {
     ]
 }
 
-const fn base(id: [u32; 4], version: usize) -> Base {
+pub const fn base(id: [u32; 4], version: usize) -> Base {
     Base {
         next: ptr::null_mut(),
         id,
@@ -215,6 +215,14 @@ pub struct Tag {
 }
 
 impl Tag {
+    /// Gilt so lange wie `lifecycle` sagt (1 = bis zum Anzeigen, 2 = bis zur Auswertung).
+    pub fn lasting(resource: &Resource, kind: u32, lifecycle: i32) -> Self {
+        Self {
+            lifecycle,
+            ..Self::new(resource, kind)
+        }
+    }
+
     /// Gilt bis zur Auswertung.
     pub fn new(resource: &Resource, kind: u32) -> Self {
         let guid = id(

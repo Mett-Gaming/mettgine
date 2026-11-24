@@ -186,6 +186,8 @@ pub(crate) struct Latency {
     /// in diesem Bild schon gewartet
     begun: bool,
     limiter: Limiter,
+    /// Streamline fuehrt Schlafpunkt und Marken
+    driver: Option<std::rc::Rc<super::vendor::Generation>>,
     reflex: Option<Reflex>,
 }
 
@@ -203,8 +205,14 @@ impl Latency {
             dirty: false,
             begun: false,
             limiter: Limiter::default(),
+            driver: None,
             reflex,
         })
+    }
+
+    /// Streamline uebernimmt Schlafpunkt und Marken.
+    pub fn drive(&mut self, g: std::rc::Rc<super::vendor::Generation>) {
+        self.driver = Some(g);
     }
 
     pub fn active(&self) -> bool {
@@ -232,7 +240,9 @@ impl Latency {
 
     /// Marke im laufenden Bild (nur Reflex).
     pub fn mark(&self, ctx: &super::Context, sc: &Swapchain, marker: vk::LatencyMarkerNV) {
-        if let (Some(f), true) = (&ctx.low_latency.reflex, self.active()) {
+        if let Some(g) = &self.driver {
+            g.mark(marker);
+        } else if let (Some(f), true) = (&ctx.low_latency.reflex, self.active()) {
             // SAFETY: Swapchain und Geraet leben, die Erweiterung ist eingeschaltet.
             unsafe { reflex::mark(f, sc.handle, self.frame, marker) };
         }
@@ -263,6 +273,10 @@ impl Latency {
         if !self.begun {
             self.frame += 1;
             self.begun = true;
+            if let Some(g) = &self.driver {
+                g.begin(self.fps, self.mode == LowLatency::Boost);
+                g.mark(vk::LatencyMarkerNV::SIMULATION_START);
+            }
         }
     }
 
@@ -353,6 +367,10 @@ impl Renderer {
         }
         if self.latency.dirty && !self.latency.active() {
             self.latency.apply(&self.ctx, &self.swapchain);
+        }
+        if self.latency.driver.is_some() {
+            self.latency.ensure_begun();
+            return Ok(());
         }
         if !self.latency.active() {
             return Ok(());

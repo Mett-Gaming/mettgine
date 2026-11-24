@@ -165,19 +165,20 @@ impl Renderer {
     pub fn new(window: &Window, cfg: &Config) -> Result<Self> {
         let size = window.inner_size();
         let window_size = (size.width.max(1), size.height.max(1));
-        let vendors = vendor::Vendors::load(cfg.upscalers);
+        let vendors = vendor::Vendors::load(cfg.upscalers, cfg.frame_generation);
         let ctx = Context::new(
             window,
             device::Want {
                 ray_tracing: cfg.ray_tracing,
                 low_latency: cfg.low_latency,
+                frame_generation: cfg.frame_generation,
                 diagnostics: cfg.diagnostics,
                 hdr: cfg.hdr_output,
                 gpu_culling: cfg.gpu_culling,
             },
             &vendors,
         )?;
-        let latency = Latency::new(&ctx)?;
+        let mut latency = Latency::new(&ctx)?;
         let swapchain = Swapchain::new(
             &ctx,
             window_size,
@@ -185,6 +186,16 @@ impl Renderer {
             cfg.hdr_output,
             vk::SwapchainKHR::null(),
         )?;
+        let generator = match vendors
+            .generation(ctx.physical)
+            .filter(|_| cfg.frame_generation)
+        {
+            Some(g) => {
+                latency.drive(g.clone());
+                Some(generation::Generator::new(&ctx, &swapchain, g)?)
+            }
+            None => None,
+        };
         let offscreen = offscreen_extent(window_size, cfg.resolution);
         let samples = vk::SampleCountFlags::TYPE_1;
         let (scene_format, screen_format) = if cfg.hdr_output {
@@ -309,6 +320,7 @@ impl Renderer {
                 needs_recreate: false,
                 capture: Capture::default(),
                 latency,
+                generator,
                 upscale: modern::Upscale::new(vendors, cfg.upscalers),
                 hdr,
                 memory_in: 0,

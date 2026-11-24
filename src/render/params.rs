@@ -52,6 +52,9 @@ pub struct Config<'a> {
     /// Techniken der Hersteller bereitstellen (Vorgabe: keine). Braucht das passende Cargo-Feature
     /// und die DLLs neben der exe; was geht, sagt [`super::Renderer::upscalers`]
     pub upscalers: &'a [super::Upscaler],
+    /// Bilderzeugung (DLSS Frame Generation) bereitstellen (Vorgabe: aus), braucht das Cargo-Feature
+    /// `streamline` und die DLLs. Eingeschaltet wird mit [`super::Renderer::set_frame_generation`]
+    pub frame_generation: bool,
     /// Verdecktes auf der Grafikkarte aussortieren ([`super::Features::gpu_culling`]) bereitstellen
     /// (Vorgabe: aus)
     pub gpu_culling: bool,
@@ -83,6 +86,7 @@ impl<'a> Config<'a> {
             ray_tracing: false,
             low_latency: false,
             upscalers: &[],
+            frame_generation: false,
             gpu_culling: false,
             hdr_output: false,
             diagnostics: false,

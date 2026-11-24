@@ -14,12 +14,20 @@ impl Renderer {
         if w == 0 || h == 0 {
             return Ok(());
         }
+        if let Some(g) = &self.generator {
+            g.gen.apply(false); // waehrend des Umbaus aus
+        }
         // SAFETY: Neuaufbau; danach nutzt die GPU keine der alten Ressourcen mehr.
         unsafe { self.ctx.device.device_wait_idle()? };
         let hdr = self.wants_hdr();
         let new = Swapchain::new(&self.ctx, (w, h), self.vsync, hdr, self.swapchain.handle)?;
         std::mem::replace(&mut self.swapchain, new).destroy(&self.ctx);
         self.latency.swapchain_changed();
+        if let Some(g) = &mut self.generator {
+            // SAFETY: die GPU ist untaetig (oben gewartet)
+            unsafe { g.rebuild(&self.ctx, &self.swapchain)? };
+            g.gen.apply(true);
+        }
         if let Some(h) = &mut self.hdr {
             // SAFETY: die GPU ist untaetig (oben gewartet)
             unsafe {
@@ -296,6 +304,9 @@ impl Renderer {
             self.needs_recreate = true;
         }
         self.latency.end(true);
+        if let Some(g) = &self.generator {
+            g.gen.presented();
+        }
         if cap.is_some() {
             let paper = self.paper_white();
             self.capture.finish(&self.ctx, &self.swapchain, paper)?;

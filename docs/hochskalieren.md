@@ -28,6 +28,21 @@ Features {
 
 **Mit DLSS** lädt die Engine Vulkan über Streamlines Interposer. Das geht je Prozess nur für einen Renderer. Nachladen aus dem Netz ist abgeschaltet.
 
+## Bilderzeugung
+
+DLSS Frame Generation, mit `Config::frame_generation` (Feature `streamline`, dazu `sl.dlss_g.dll`, `nvngx_dlssg.dll`, `sl.reflex.dll`, `sl.pcl.dll`, `NvLowLatencyVk.dll`):
+
+```rust
+renderer.frame_generation_max();      // 0 = geht hier nicht
+renderer.set_vsync(false);            // Voraussetzung
+renderer.set_frame_generation(1);     // ein erzeugtes Bild je gerechnetem
+renderer.frame_generation();          // was gezeigt wird, Fehlerzeichen
+```
+
+Streamline führt dann auch Reflex (immer an); der eigene Weg aus [verzoegerung.md](verzoegerung.md) bleibt aus, `set_fps_limit` und `LowLatency::Boost` gelten weiter. Die Oberfläche bleibt aus der Bildberechnung heraus, weil das Bild ohne sie mitgegeben wird (nicht bei HDR-Ausgabe). Erzeugt wird nur, solange das Fenster im Vordergrund ist.
+
+**Stand:** Aufbau, Ein- und Ausschalten und Größenwechsel laufen auf einer RTX 5090 ohne Fehlermeldung. Wirklich erzeugte Bilder hat noch niemand gesehen, die Prüfung ohne Vordergrundfenster kann das nicht. FSR Frame Generation ist nicht eingebaut: Sie ersetzt die Swapchain durch eine eigene mit eigenen Warteschlangen.
+
 ## Lizenzen
 
 Die DLLs gehören den Herstellern und dürfen nur zusammen mit einem Spiel und ihren Lizenztexten weitergegeben werden. Vor einer Weitergabe entscheidet die Person:
@@ -54,6 +69,8 @@ Pathtracing mit einem Strahl je Bildpunkt, halbe Auflösung, Abstand zum langen 
 ```powershell
 $env:METTGINE_VENDOR = "<Ordner mit DLLs>;<weiterer Ordner>"   # nur zum Entwickeln
 cargo run --release --features full --example gpu_check_upscale <ordner>
+cargo run --release --features full --example gpu_check_generation
+cargo run --release --features full --example modern   # alles zum Umschalten im Menü
 ```
 
 Ungeprüft: Spielgefühl, eigenständige Radeon- und Arc-Karten, FSR 4.
