@@ -1,14 +1,14 @@
 //! Zeichnet Testbilder mit den Welt-Materialien (Boxen, Lichter, Monitor, Hologramme, Figuren,
 //! Oberflaeche, VHS) ohne Spieldaten und ohne sichtbares Fenster.
 //!
-//! `gpu_check_world <ordner>` legt die Bilder als BMP ab; liegen dort schon welche, muessen die
+//! `gpu_check_world <ordner> [shader-ordner]` legt die Bilder als BMP ab; liegen dort schon welche, muessen die
 //! neuen Byte fuer Byte gleich sein (Vergleich vor und nach einem Umbau).
 
 use glam::{Mat4, Vec3, Vec4};
 use mettgine::gpu::{GpuInstance, GpuLight, MeshData, MeshVertex, SkinData, SkinVertex};
 use mettgine::render::{
     Config, FrameInput, Lighting, MeshDraw, Post, Renderer, Resolution, Rooms, SkinDraw, UiSize,
-    UiVertex, Vhs, View,
+    UiVertex, Vhs, View, WorldShaders,
 };
 use std::path::{Path, PathBuf};
 use winit::application::ApplicationHandler;
@@ -161,7 +161,22 @@ fn run(window: &Window, dir: &Path) -> Result<(), String> {
     };
     let (font, signs) = (pattern(128, 128), pattern(512, 64));
     let (meshes, skins) = ([pyramid()], [skin()]);
+    // Welt-Materialien eines Spiels: Ordner mit world.vert.spv und world.frag.spv
+    let own: Option<Vec<Vec<u8>>> = std::env::args_os().nth(2).and_then(|d| {
+        ["world.vert.spv", "world.frag.spv"]
+            .iter()
+            .map(|f| std::fs::read(Path::new(&d).join(f)).ok())
+            .collect()
+    });
+    let world_shaders = match &own {
+        Some(b) => WorldShaders {
+            vert: &b[0],
+            frag: &b[1],
+        },
+        None => WorldShaders::default(),
+    };
     let config = Config {
+        world: world_shaders,
         signs: Some((&signs, 512, 64)),
         resolution: Resolution::Fixed(480, 270),
         ui: UiSize::Fixed(480, 270),

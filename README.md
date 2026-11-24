@@ -27,7 +27,7 @@ Die Engine der Mett-Gaming-Spiele, entstanden aus [KASSE 0](https://github.com/M
 | `settings` | Einstellungen lesen und speichern |
 | `crash`, `crash_window` | Protokoll, Absturzberichte (auch bei Treiberabstürzen) und Absturzfenster |
 
-Die Shader liegen in `shaders/` und werden beim Bauen mit naga zu SPIR-V übersetzt, ein Vulkan SDK braucht man nicht. Die vorgegebenen Welt-Materialien (Poster, Schilder, Monitor) stammen aus KASSE 0 und liegen in `_world_kasse0.wgsl`; eigene bringt ein Spiel mit `Config::world` mit.
+Die Shader liegen in `shaders/` und werden beim Bauen mit naga zu SPIR-V übersetzt, ein Vulkan SDK braucht man nicht. Eigene Welt-Materialien bringt ein Spiel mit `Config::world` mit und übersetzt sie in seinem `build.rs` mit `game_shaders.rs` (Beispiel: KASSE 0, `shaders/world.wgsl`).
 
 ## Schnell anfangen
 
