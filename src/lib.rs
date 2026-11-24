@@ -5,6 +5,7 @@
 //!   Die Shader liegen in `shaders/`. Dazu `particles`, `cull`, `splash`.
 //! - `app`: Spielgeruest (Fenster, Ereignisse, Bildtakt). `time`: fester Takt.
 //! - `shapes`: einfache Formen als Modelle.
+//! - `asset`, `jobs`: Spieldaten im Hintergrund laden, Arbeit verteilen.
 //! - `collide`: Kollision und Strahlen. `profile`: Messanzeige.
 //! - `audio`, `input`, `canvas`, `text`, `settings`: Klang, Eingabe, Menues, Einstellungen.
 //! - `presence`: Status fuer den Mett Launcher (Discord-Anzeige).
@@ -19,6 +20,7 @@ pub use winit;
 
 pub mod anim;
 pub mod app;
+pub mod asset;
 pub mod audio;
 pub mod canvas;
 pub mod collide;
@@ -27,6 +29,7 @@ pub mod crash_window;
 pub mod cull;
 pub mod gpu;
 pub mod input;
+pub mod jobs;
 pub mod net;
 pub mod particles;
 pub mod presence;

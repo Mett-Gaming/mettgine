@@ -12,6 +12,7 @@
 //! - [`loopback::Loopback`]: im Speicher, fuer Tests ohne Netzwerk
 
 pub mod loopback;
+#[cfg(feature = "mett-net")]
 pub mod mett;
 pub mod sync;
 pub mod udp;

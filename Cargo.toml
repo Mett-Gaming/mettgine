@@ -21,7 +21,21 @@ gilrs = "0.11"
 # Audio-Wiedergabe (audio)
 rodio = { version = "0.19", default-features = false }
 # Mehrspieler ueber den Mett Launcher (net::mett)
-mett-net = { git = "https://github.com/Mett-Gaming/mett-launcher", tag = "v0.2.1" }
+mett-net = { git = "https://github.com/Mett-Gaming/mett-launcher", tag = "v0.2.1", optional = true }
+# Modelle im glTF-Format (asset::gltf)
+gltf = { version = "1.4", optional = true, default-features = false, features = ["import", "utils", "names", "KHR_materials_emissive_strength"] }
+# Bilder (asset::image)
+image = { version = "0.25", optional = true, default-features = false, features = ["png", "jpeg"] }
+
+[features]
+# Was ohne weitere Angaben dabei ist. Alles andere schaltet ein Spiel in seiner Cargo.toml ein:
+# mettgine = { path = "mettgine", features = ["gltf"] }
+default = ["mett-net"]
+mett-net = ["dep:mett-net"]
+images = ["dep:image"]
+gltf = ["dep:gltf", "images"]
+# alles
+full = ["mett-net", "gltf", "images"]
 
 [build-dependencies]
 naga = { version = "24", features = ["wgsl-in", "spv-out"] }

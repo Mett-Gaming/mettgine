@@ -40,12 +40,12 @@ impl Local {
     }
 }
 
-struct ClipData {
-    fps: f32,
-    frames: usize,
-    looped: bool,
+pub(crate) struct ClipData {
+    pub fps: f32,
+    pub frames: usize,
+    pub looped: bool,
     /// frames * bones
-    locals: Vec<Local>,
+    pub locals: Vec<Local>,
 }
 
 /// Eingriffe in die Pose (alles optional, Standard = nichts).
@@ -88,7 +88,7 @@ fn hash(x: f32) -> f32 {
 }
 
 impl AnimSet {
-    fn new(
+    pub(crate) fn new(
         names: Vec<String>,
         parents: Vec<i32>,
         rest_inv: Vec<Mat4>,
