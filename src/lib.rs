@@ -10,7 +10,7 @@
 //!   `menu`, `debug` (Linien, Konsole, Messung); mit Features `ecs` und `physics`.
 //! - `collide`: Kollision und Strahlen. `profile`: Messanzeige.
 //! - `audio`, `input`, `canvas`, `text`, `settings`: Klang, Eingabe, Menues, Einstellungen.
-//! - `presence`: Status fuer den Mett Launcher (Discord-Anzeige).
+//! - `presence`: Status fuer den Mett Launcher (Discord-Anzeige). `launcher`: Erfolge und Overlay.
 //! - `net`: Mehrspieler-Verbindung und Abgleich.
 //! - `anim`: Knochen-Animation (.k0a v2), Ueberblenden, Kopf-Blickziel, Verformungen.
 //! - `gpu`: Datenformate zwischen Spiel und Renderer.
@@ -36,6 +36,7 @@ pub mod debug;
 pub mod gpu;
 pub mod input;
 pub mod jobs;
+pub mod launcher;
 pub mod locale;
 pub mod menu;
 pub mod nav;

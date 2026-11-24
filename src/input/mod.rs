@@ -237,6 +237,13 @@ impl Input {
         self.sticks = Sticks::default();
     }
 
+    /// Alles verwerfen, was das Spiel sonst saehe (das Overlay des Launchers ist offen).
+    pub(crate) fn hide_from_game(&mut self) {
+        self.release_all();
+        self.mouse = (0.0, 0.0);
+        self.wheel = 0.0;
+    }
+
     /// Wurde eine der Belegungen in diesem Bild neu gedrueckt?
     pub fn pressed(&self, binds: &[Bind]) -> bool {
         binds.iter().any(|b| self.pressed.contains(b))

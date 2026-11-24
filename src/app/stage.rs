@@ -1,6 +1,7 @@
 //! Was das Geruest fuer das Spiel bereithaelt: Fenster, Renderer, Eingabe, Maus.
 
 use crate::input::Input;
+use crate::launcher::Achievements;
 use crate::render::Renderer;
 use winit::window::{CursorGrabMode, Fullscreen, Window};
 
@@ -18,19 +19,24 @@ pub struct Stage {
     pub window: Window,
     /// Tastatur, Maus und Controller
     pub input: Input,
+    /// Erfolge fuer den Launcher; ohne Launcher passiert nichts
+    pub achievements: Achievements,
     cursor: (f32, f32),
     grabbed: bool,
+    overlay: bool,
     quit: bool,
 }
 
 impl Stage {
-    pub(super) fn new(renderer: Renderer, window: Window) -> Self {
+    pub(super) fn new(renderer: Renderer, window: Window, achievements: Achievements) -> Self {
         Self {
             renderer,
             window,
             input: Input::new(),
+            achievements,
             cursor: (0.0, 0.0),
             grabbed: false,
+            overlay: false,
             quit: false,
         }
     }
@@ -79,7 +85,12 @@ impl Stage {
     }
 
     /// Maus fangen und verstecken oder wieder freigeben.
+    /// Solange das Overlay des Launchers offen ist, gilt der Wunsch erst danach.
     pub fn set_grab(&mut self, grab: bool) {
+        if self.overlay {
+            self.grabbed = grab;
+            return;
+        }
         if grab {
             self.grabbed = self
                 .window
@@ -91,6 +102,27 @@ impl Stage {
             self.grabbed = false;
         }
         self.window.set_cursor_visible(!grab);
+    }
+
+    /// Ist das Overlay des Launchers offen? Das Spiel bekommt dann keine Eingaben; im Einzelspieler
+    /// sollte es anhalten.
+    pub fn overlay_open(&self) -> bool {
+        self.overlay
+    }
+
+    pub(super) fn set_overlay(&mut self, open: bool) {
+        if self.overlay == open {
+            return;
+        }
+        self.input.release_all();
+        if open {
+            let _ = self.window.set_cursor_grab(CursorGrabMode::None);
+            self.window.set_cursor_visible(true);
+        }
+        self.overlay = open;
+        if !open {
+            self.set_grab(self.grabbed);
+        }
     }
 
     pub fn fullscreen(&self) -> bool {

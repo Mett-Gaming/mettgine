@@ -2,6 +2,7 @@
 
 use super::{AppConfig, Game, Result, Stage};
 use crate::crash;
+use crate::launcher::{self, Achievements, Overlay, Route};
 use crate::presence::Presence;
 use crate::time::FrameClock;
 use winit::application::ApplicationHandler;
@@ -20,17 +21,22 @@ struct Handler<G> {
     config: AppConfig,
     clock: FrameClock,
     presence: Presence,
+    achievements: Achievements,
+    overlay: Overlay,
     report_in: f32,
 }
 
 pub(super) fn run<G: Game>(config: AppConfig, game: G) -> Result<()> {
     let event_loop = EventLoop::new()?;
     event_loop.set_control_flow(ControlFlow::Poll);
+    let (achievements, overlay) = launcher::connect();
     let mut handler = Handler {
         stage: None,
         game,
         clock: FrameClock::new(config.max_dt),
         presence: Presence::from_launcher(),
+        achievements,
+        overlay,
         report_in: 0.0,
         config,
     };
@@ -61,7 +67,7 @@ impl<G: Game> Handler<G> {
             Ok(renderer) => {
                 crash::context("GPU", renderer.gpu_name());
                 crash::log(&format!("GPU: {}", renderer.gpu_name()));
-                Some(Stage::new(renderer, window))
+                Some(Stage::new(renderer, window, self.achievements.clone()))
             }
             Err(e) => {
                 crash::fatal(
@@ -96,9 +102,11 @@ impl<G: Game> Handler<G> {
         let dt = self.clock.tick();
         self.report(dt);
         if let Some(stage) = &mut self.stage {
+            stage.set_overlay(self.overlay.open());
             stage.renderer.input_sampled();
             self.game.frame(stage, dt);
             stage.input.begin_frame();
+            self.overlay.frame(&mut stage.input);
         }
     }
 }
@@ -134,6 +142,10 @@ impl<G: Game> ApplicationHandler for Handler<G> {
         if self.config.block_input_on_splash && is_input(&event) && stage.splash_active() {
             return;
         }
+        let size = stage.size();
+        if self.overlay.event(&event, (size.width, size.height)) == Route::Swallow {
+            return;
+        }
         stage.input.event(&event);
         match &event {
             WindowEvent::CloseRequested => stage.quit(),
@@ -154,6 +166,9 @@ impl<G: Game> ApplicationHandler for Handler<G> {
 
     fn device_event(&mut self, _event_loop: &ActiveEventLoop, _id: DeviceId, event: DeviceEvent) {
         if let (DeviceEvent::MouseMotion { delta }, Some(stage)) = (event, &mut self.stage) {
+            if stage.overlay_open() {
+                return;
+            }
             let (dx, dy) = (delta.0 as f32, delta.1 as f32);
             stage.input.mouse_moved(dx, dy);
             if stage.grabbed() {
