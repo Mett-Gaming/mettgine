@@ -96,6 +96,7 @@ impl<G: Game> Handler<G> {
         let dt = self.clock.tick();
         self.report(dt);
         if let Some(stage) = &mut self.stage {
+            stage.renderer.input_sampled();
             self.game.frame(stage, dt);
             stage.input.begin_frame();
         }
@@ -162,6 +163,12 @@ impl<G: Game> ApplicationHandler for Handler<G> {
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        // Vor dem Einsammeln der Eingaben warten; sie treffen danach noch vor dem Zeichnen ein
+        if let Some(s) = &mut self.stage {
+            if let Err(e) = s.renderer.begin_frame() {
+                crash::log(&format!("Warten auf das naechste Bild: {e}"));
+            }
+        }
         // Unsichtbare Fenster bekommen von Windows keine Zeichen-Ereignisse
         if !self.config.visible {
             self.redraw();

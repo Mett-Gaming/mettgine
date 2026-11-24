@@ -72,6 +72,8 @@ Vorgabe ist klein; ein Spiel nimmt dazu, was es braucht: `mettgine = { path = "m
 
 Die **moderne Grafik** (Materialien, HDR, Schattenstufen, viele Lampen, Raytracing, Pathtracing, Hochskalieren) braucht kein Feature: Sie entsteht, sobald `FrameInput::scene` gesetzt ist. Siehe [docs/moderne-grafik.md](docs/moderne-grafik.md).
 
+**Reflex, Anti-Lag, Bildbegrenzung und Diagnose** sind ebenfalls wahlfrei, siehe [docs/verzoegerung.md](docs/verzoegerung.md).
+
 ## In einem Spiel benutzen
 
 Mettgine wird als **Git-Submodule** eingebunden und als Pfad-Abhängigkeit gebaut:

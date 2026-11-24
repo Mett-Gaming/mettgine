@@ -46,6 +46,11 @@ pub struct Config<'a> {
     /// Raytracing einschalten (Vorgabe: aus). Ob es klappt, sagt
     /// [`super::Renderer::ray_tracing`]
     pub ray_tracing: bool,
+    /// Reflex, Anti-Lag und Warten auf den Bildschirm bereitstellen (Vorgabe: aus). Eingeschaltet
+    /// wird mit [`super::Renderer::set_low_latency`]
+    pub low_latency: bool,
+    /// Grund eines Grafikkarten-Ausfalls und belegten Speicher melden (Vorgabe: aus)
+    pub diagnostics: bool,
 }
 
 impl<'a> Config<'a> {
@@ -67,6 +72,8 @@ impl<'a> Config<'a> {
             last_wins: true,
             world: WorldShaders::default(),
             ray_tracing: false,
+            low_latency: false,
+            diagnostics: false,
         }
     }
 }

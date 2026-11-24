@@ -1,6 +1,7 @@
 //! Bilder im Flug, Abschicken, Anzeigen und Bildschirmfotos.
 
 use super::context::Context;
+use super::latency::Latency;
 use super::swapchain::Swapchain;
 use super::transfer::write_bmp;
 use super::util::{image_barrier, Buffer};
@@ -93,6 +94,7 @@ pub(crate) unsafe fn submit_and_present(
     swapchain: &Swapchain,
     frame: &Frame,
     image_index: u32,
+    latency: &Latency,
 ) -> Result<bool> {
     let wait = [frame.image_available];
     let stages = [vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
@@ -100,24 +102,33 @@ pub(crate) unsafe fn submit_and_present(
     let signal = [swapchain.render_finished[image_index as usize]];
     // Erst hier: Scheitert das Aufnehmen, bleibt der Fence frei und das naechste Bild wartet nicht
     ctx.device.reset_fences(&[frame.in_flight])?;
-    ctx.device.queue_submit(
-        ctx.queue,
-        &[vk::SubmitInfo::default()
-            .wait_semaphores(&wait)
-            .wait_dst_stage_mask(&stages)
-            .command_buffers(&cmds)
-            .signal_semaphores(&signal)],
-        frame.in_flight,
-    )?;
+    let mark = |m| latency.mark(ctx, swapchain, m);
+    let id = latency.present_id(ctx);
+    // Ohne `LatencySubmissionPresentIdNV`: damit ordnet der Treiber die Zeiten dem falschen Bild zu
+    let submit = vk::SubmitInfo::default()
+        .wait_semaphores(&wait)
+        .wait_dst_stage_mask(&stages)
+        .command_buffers(&cmds)
+        .signal_semaphores(&signal);
+    ctx.device
+        .queue_submit(ctx.queue, &[submit], frame.in_flight)?;
+    mark(vk::LatencyMarkerNV::RENDERSUBMIT_END);
     let swapchains = [swapchain.handle];
     let indices = [image_index];
-    match ctx.swapchain_loader.queue_present(
-        ctx.queue,
-        &vk::PresentInfoKHR::default()
-            .wait_semaphores(&signal)
-            .swapchains(&swapchains)
-            .image_indices(&indices),
-    ) {
+    let ids = [id.unwrap_or(0)];
+    let mut present_id = vk::PresentIdKHR::default().present_ids(&ids);
+    let mut info = vk::PresentInfoKHR::default()
+        .wait_semaphores(&signal)
+        .swapchains(&swapchains)
+        .image_indices(&indices);
+    if id.is_some() {
+        info = info.push_next(&mut present_id);
+    }
+    latency.before_present(ctx);
+    mark(vk::LatencyMarkerNV::PRESENT_START);
+    let shown = ctx.swapchain_loader.queue_present(ctx.queue, &info);
+    mark(vk::LatencyMarkerNV::PRESENT_END);
+    match shown {
         Ok(suboptimal) => Ok(suboptimal),
         Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => Ok(true),
         Err(e) => Err(e.into()),

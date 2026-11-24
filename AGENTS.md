@@ -171,6 +171,7 @@ Gearbeitet wird direkt auf `main`, mit Einträgen, Zusammenführungen und Hochla
   - Die Engine bleibt sparsam: keine Zuweisungen pro Bild in heißen Schleifen ohne Grund, keine blockierenden Dateizugriffe im Bild-Takt.
   - Wer etwas Teures einbaut, misst es: Bildzeit mit `KASSE0_PERF` im Spiel oder eigener Messtest.
 - **Abhängigkeiten (Crates)** sparsam: nur mit klarem Nutzen, mit Lizenz MIT, Apache-2.0, BSD, Zlib oder CC0, und in der README unter Lizenzen nennen.
+  - Ausnahme: Hersteller-DLLs für Hochskalieren und Bilderzeugung (NVIDIA, AMD, Intel) dürfen hinter eigenen Cargo-Features zur Laufzeit geladen werden. Sie liegen nie im Archiv, sind zum Bauen nicht nötig, und ohne sie läuft alles wie sonst.
 
 ## 8. Was der Agent nicht ohne ausdrückliche Bitte tut
 - diese Datei oder `CLAUDE.md` ändern

@@ -72,26 +72,28 @@ impl Swapchain {
                 vk::CompositeAlphaFlagsKHR::INHERIT
             };
 
-            let handle = ctx.swapchain_loader.create_swapchain(
-                &vk::SwapchainCreateInfoKHR::default()
-                    .surface(ctx.surface)
-                    .min_image_count(count)
-                    .image_format(format.format)
-                    .image_color_space(format.color_space)
-                    .image_extent(extent)
-                    .image_array_layers(1)
-                    .image_usage(
-                        vk::ImageUsageFlags::COLOR_ATTACHMENT
-                            | (caps.supported_usage_flags & vk::ImageUsageFlags::TRANSFER_SRC),
-                    )
-                    .image_sharing_mode(vk::SharingMode::EXCLUSIVE)
-                    .pre_transform(caps.current_transform)
-                    .composite_alpha(alpha)
-                    .present_mode(present_mode)
-                    .clipped(true)
-                    .old_swapchain(old),
-                None,
-            )?;
+            let mut latency = vk::SwapchainLatencyCreateInfoNV::default().latency_mode_enable(true);
+            let mut info = vk::SwapchainCreateInfoKHR::default()
+                .surface(ctx.surface)
+                .min_image_count(count)
+                .image_format(format.format)
+                .image_color_space(format.color_space)
+                .image_extent(extent)
+                .image_array_layers(1)
+                .image_usage(
+                    vk::ImageUsageFlags::COLOR_ATTACHMENT
+                        | (caps.supported_usage_flags & vk::ImageUsageFlags::TRANSFER_SRC),
+                )
+                .image_sharing_mode(vk::SharingMode::EXCLUSIVE)
+                .pre_transform(caps.current_transform)
+                .composite_alpha(alpha)
+                .present_mode(present_mode)
+                .clipped(true)
+                .old_swapchain(old);
+            if ctx.low_latency.wants_swapchain_info() {
+                info = info.push_next(&mut latency);
+            }
+            let handle = ctx.swapchain_loader.create_swapchain(&info, None)?;
             let images = ctx.swapchain_loader.get_swapchain_images(handle)?;
             let mut views = Vec::with_capacity(images.len());
             let mut render_finished = Vec::with_capacity(images.len());

@@ -1,6 +1,7 @@
 //! Beschleunigungsstrukturen anlegen und bauen.
 
-use super::super::super::context::{Context, RtFns};
+use super::super::super::context::Context;
+use super::super::super::device::RtFns;
 use super::super::super::Result;
 use super::super::memory::{Arena, GpuBuffer};
 use super::super::model::Vertex;

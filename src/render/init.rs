@@ -165,7 +165,15 @@ impl Renderer {
     pub fn new(window: &Window, cfg: &Config) -> Result<Self> {
         let size = window.inner_size();
         let window_size = (size.width.max(1), size.height.max(1));
-        let ctx = Context::new(window, cfg.ray_tracing)?;
+        let ctx = Context::new(
+            window,
+            device::Want {
+                ray_tracing: cfg.ray_tracing,
+                low_latency: cfg.low_latency,
+                diagnostics: cfg.diagnostics,
+            },
+        )?;
+        let latency = Latency::new(&ctx)?;
         let swapchain = Swapchain::new(&ctx, window_size, true, vk::SwapchainKHR::null())?;
         let offscreen = offscreen_extent(window_size, cfg.resolution);
         let samples = vk::SampleCountFlags::TYPE_1;
@@ -280,6 +288,8 @@ impl Renderer {
                 vsync: true,
                 needs_recreate: false,
                 capture: Capture::default(),
+                latency,
+                memory_in: 0,
                 ctx,
             };
             for fi in 0..FRAMES_IN_FLIGHT {

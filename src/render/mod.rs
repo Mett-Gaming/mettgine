@@ -13,11 +13,14 @@
 //!
 //! Dateien: `params` (Eingaben), `init`/`descriptors`/`pipelines` (Aufbau), `world` (selten
 //! geaenderte Daten), `lists` (was ist zu sehen), `draw` (ein Bild vorbereiten),
-//! `frame`/`screen` (aufnehmen), `quality` (Zuschaltbares), `modern`/`models` (moderne Grafik). Darunter die Vulkan-Grundlagen.
+//! `frame`/`screen` (aufnehmen), `latency` (Reflex, Anti-Lag, Bildbegrenzung), `diagnostics`, `quality` (Zuschaltbares), `modern`/`models` (moderne Grafik). Darunter die Vulkan-Grundlagen.
 //! Shader: `shaders/`, Schnittstelle in `_common.wgsl` und `descriptors`.
 
 pub(crate) mod cache;
 pub(crate) mod context;
+mod device;
+mod diagnostics;
+mod latency;
 pub(crate) mod pipeline;
 pub(crate) mod present;
 pub(crate) mod swapchain;
@@ -41,6 +44,7 @@ mod screen;
 mod tests;
 mod world;
 
+pub use latency::{LatencyReport, LatencyTech, LowLatency};
 pub use modern::{MAX_UI_IMAGES, *};
 pub use params::*;
 pub use pipelines::WorldShaders;
@@ -54,6 +58,7 @@ use bytemuck::{Pod, Zeroable};
 use context::Context;
 use descriptors::Descriptors;
 use glam::Mat4;
+use latency::Latency;
 use lists::DrawLists;
 use pipelines::{Pipelines, SceneSetup};
 use present::{Capture, Frame};
@@ -89,6 +94,8 @@ const HARD_BONES: usize = 131_072;
 const HARD_PARTICLES: usize = 131_072;
 /// Partikel, fuer die am Anfang Platz ist
 const START_PARTICLES: usize = 1024;
+/// Alle so vielen Bilder wird der Grafikspeicher gemessen
+const MEMORY_EVERY: u32 = 60;
 /// Kantenlaenge der Schattenkarte (Texel)
 pub const SHADOW_SIZE: u32 = 2048;
 /// Uebliche virtuelle UI-Hoehe; die Breite folgt dem Seitenverhaeltnis des Fensters
@@ -242,6 +249,9 @@ pub struct Renderer {
     vsync: bool,
     needs_recreate: bool,
     capture: Capture,
+    latency: Latency,
+    /// Bilder bis zum naechsten Blick auf den Grafikspeicher
+    memory_in: u32,
     // Muss zuletzt freigegeben werden (Drop-Reihenfolge der Felder).
     ctx: Context,
 }
@@ -356,6 +366,7 @@ impl Drop for Renderer {
                 b.destroy(d);
             }
             self.capture.destroy(d);
+            self.latency.destroy(d);
             self.timer.destroy(d);
             self.splash.destroy(d);
             self.pipes.destroy(d);

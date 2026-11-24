@@ -18,6 +18,7 @@ impl Renderer {
         unsafe { self.ctx.device.device_wait_idle()? };
         let new = Swapchain::new(&self.ctx, (w, h), self.vsync, self.swapchain.handle)?;
         std::mem::replace(&mut self.swapchain, new).destroy(&self.ctx);
+        self.latency.swapchain_changed();
         let ext = offscreen_extent(self.window_size, self.resolution);
         if ext != self.offscreen || self.wanted_samples != self.samples {
             let (c, d, m) = Self::make_targets(&self.ctx, ext, self.wanted_samples)?;
@@ -169,13 +170,46 @@ impl Renderer {
         Ok(())
     }
 
+    /// Grafikspeicher hin und wieder nachsehen.
+    fn measure_memory(&mut self) {
+        if self.memory_in > 0 {
+            self.memory_in -= 1;
+            return;
+        }
+        self.memory_in = MEMORY_EVERY;
+        let (instance, pd) = (&self.ctx.instance, self.ctx.physical);
+        if let Some((used, budget)) = self.ctx.diagnostics.memory(instance, pd) {
+            self.stats.memory_mb = (used >> 20) as u32;
+            self.stats.memory_budget_mb = (budget >> 20) as u32;
+        }
+    }
+
     /// Zeichnet ein Bild. Solange das Startbild laeuft, erscheint stattdessen dieses.
     pub fn draw(&mut self, f: &FrameInput) -> Result<()> {
+        let r = self.draw_frame(f);
+        self.latency.end(false);
+        if r.as_ref().is_err_and(|e| is_device_lost(e.as_ref())) {
+            let why = self.ctx.diagnostics.fault_report();
+            let why = why.unwrap_or_else(|| "kein Grund bekannt".into());
+            crate::crash::context("Grafikkarte ausgefallen", &why);
+            crate::crash::log(&format!("Grafikkarte ausgefallen: {why}"));
+        }
+        r
+    }
+
+    fn draw_frame(&mut self, f: &FrameInput) -> Result<()> {
         if self.window_size.0 == 0 || self.window_size.1 == 0 {
             return Ok(()); // minimiert
         }
         if self.needs_recreate {
             self.recreate()?;
+        }
+        self.latency.ensure_begun();
+        for m in [
+            vk::LatencyMarkerNV::SIMULATION_END,
+            vk::LatencyMarkerNV::RENDERSUBMIT_START,
+        ] {
+            self.latency.mark(&self.ctx, &self.swapchain, m);
         }
         let fi = self.frame_index;
         let frame = self.frames[fi];
@@ -216,6 +250,7 @@ impl Renderer {
             self.particles.clear();
         } else {
             self.timer.collect(&self.ctx.device, fi, &mut self.stats);
+            self.measure_memory();
             let start = Instant::now();
             if f.scene.is_some() && self.modern.is_none() {
                 let m = modern::Modern::new(&self.ctx, self.command_pool, self.swapchain.format)?;
@@ -237,9 +272,11 @@ impl Renderer {
             self.record(frame.cmd, fi, image, &simple, counts, cap)?;
             self.stats.cpu_ms = start.elapsed().as_secs_f32() * 1000.0;
         }
-        if present::submit_and_present(&self.ctx, &self.swapchain, frame, image_index)? {
+        let (ctx, sc) = (&self.ctx, &self.swapchain);
+        if present::submit_and_present(ctx, sc, frame, image_index, &self.latency)? {
             self.needs_recreate = true;
         }
+        self.latency.end(true);
         if cap.is_some() {
             self.capture.finish(&self.ctx, &self.swapchain)?;
         }

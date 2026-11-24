@@ -34,6 +34,10 @@ pub struct FrameStats {
     pub draw_calls: u32,
     /// Objekte, die wegen einer Obergrenze fehlen (sollte 0 sein)
     pub dropped: u32,
+    /// belegter Grafikspeicher (MB), nur mit `Config::diagnostics`
+    pub memory_mb: u32,
+    /// verfuegbarer Grafikspeicher (MB); 0 = nicht messbar
+    pub memory_budget_mb: u32,
 }
 
 /// Wie viele Bilder die Auswertung umfasst
@@ -129,6 +133,12 @@ impl Meter {
             "{} gezeichnet, {} aussortiert, {} Befehle",
             s.drawn, s.culled, s.draw_calls
         ));
+        if s.memory_budget_mb > 0 {
+            out.push(format!(
+                "Grafikspeicher {} von {} MB",
+                s.memory_mb, s.memory_budget_mb
+            ));
+        }
         if s.dropped > 0 {
             out.push(format!("{} Objekte fehlen (Obergrenze)", s.dropped));
         }

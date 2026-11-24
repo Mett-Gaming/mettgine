@@ -1,5 +1,6 @@
-//! Vulkan-Instanz, Surface, Geraet und Queue.
+//! Vulkan-Instanz, Surface, Geraet und Queue (Auswahl und Anlegen des Geraets: `device`).
 
+use super::device::{self, RtFns};
 use super::Result;
 use ash::vk;
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
@@ -7,47 +8,6 @@ use std::ffi::{c_void, CStr};
 use winit::window::Window;
 
 const VALIDATION_LAYER: &CStr = c"VK_LAYER_KHRONOS_validation";
-
-/// Funktionen fuer Raytracing (nur, wenn eingeschaltet und von der Karte unterstuetzt).
-pub struct RtFns {
-    pub accel: ash::khr::acceleration_structure::Device,
-    /// Ausrichtung des Arbeitsspeichers beim Bauen
-    pub scratch_align: u64,
-}
-
-/// Kann die Karte Strahlabfragen samt Texturfeldern?
-unsafe fn supports_rt(instance: &ash::Instance, pd: vk::PhysicalDevice) -> bool {
-    let Ok(list) = instance.enumerate_device_extension_properties(pd) else {
-        return false;
-    };
-    let has = |name: &CStr| {
-        list.iter()
-            .any(|e| e.extension_name_as_c_str().ok() == Some(name))
-    };
-    if !RT_EXTENSIONS.iter().all(|e| has(e)) {
-        return false;
-    }
-    let mut v12 = vk::PhysicalDeviceVulkan12Features::default();
-    let mut accel = vk::PhysicalDeviceAccelerationStructureFeaturesKHR::default();
-    let mut query = vk::PhysicalDeviceRayQueryFeaturesKHR::default();
-    let mut f = vk::PhysicalDeviceFeatures2::default()
-        .push_next(&mut v12)
-        .push_next(&mut accel)
-        .push_next(&mut query);
-    instance.get_physical_device_features2(pd, &mut f);
-    let yes = |b: vk::Bool32| b == vk::TRUE;
-    yes(v12.buffer_device_address)
-        && yes(v12.shader_sampled_image_array_non_uniform_indexing)
-        && yes(v12.descriptor_binding_partially_bound)
-        && yes(accel.acceleration_structure)
-        && yes(query.ray_query)
-}
-
-const RT_EXTENSIONS: [&CStr; 3] = [
-    ash::khr::acceleration_structure::NAME,
-    ash::khr::ray_query::NAME,
-    ash::khr::deferred_host_operations::NAME,
-];
 
 pub struct Context {
     pub _entry: ash::Entry,
@@ -62,6 +22,8 @@ pub struct Context {
     pub queue: vk::Queue,
     pub swapchain_loader: ash::khr::swapchain::Device,
     pub rt: Option<RtFns>,
+    pub low_latency: super::latency::Support,
+    pub diagnostics: super::diagnostics::Diagnostics,
     /// uebersetzte Shader (siehe `cache`)
     pub cache: vk::PipelineCache,
     /// hoechste Filterstufe schraeg gesehener Texturen (1 = kann die Karte nicht)
@@ -86,8 +48,8 @@ unsafe extern "system" fn debug_callback(
 }
 
 impl Context {
-    /// `want_rt` = Raytracing einschalten, falls die Karte es kann.
-    pub fn new(window: &Window, want_rt: bool) -> Result<Self> {
+    /// `want` = zuschaltbare Teile, soweit die Karte sie kann.
+    pub fn new(window: &Window, want: device::Want) -> Result<Self> {
         unsafe {
             let entry = ash::Entry::load()?;
             let display = window.display_handle()?.as_raw();
@@ -144,33 +106,7 @@ impl Context {
             let surface_loader = ash::khr::surface::Instance::new(&entry, &instance);
             let surface = ash_window::create_surface(&entry, &instance, display, win, None)?;
 
-            // Geraet waehlen: Vulkan 1.3, eine Queue mit Grafik + Present, diskrete GPU bevorzugt.
-            let mut best: Option<(vk::PhysicalDevice, u32, u32)> = None;
-            for pd in instance.enumerate_physical_devices()? {
-                let props = instance.get_physical_device_properties(pd);
-                if props.api_version < vk::API_VERSION_1_3 {
-                    continue;
-                }
-                let families = instance.get_physical_device_queue_family_properties(pd);
-                for (i, fam) in families.iter().enumerate() {
-                    let i = i as u32;
-                    if fam.queue_flags.contains(vk::QueueFlags::GRAPHICS)
-                        && surface_loader.get_physical_device_surface_support(pd, i, surface)?
-                    {
-                        let score = match props.device_type {
-                            vk::PhysicalDeviceType::DISCRETE_GPU => 3,
-                            vk::PhysicalDeviceType::INTEGRATED_GPU => 2,
-                            _ => 1,
-                        };
-                        if best.is_none_or(|b| score > b.2) {
-                            best = Some((pd, i, score));
-                        }
-                        break;
-                    }
-                }
-            }
-            let (physical, queue_family, _) =
-                best.ok_or("Keine Vulkan-1.3-GPU mit Grafik- und Present-Queue gefunden")?;
+            let (physical, queue_family) = device::choose(&instance, &surface_loader, surface)?;
             let props = instance.get_physical_device_properties(physical);
             let gpu_name = format!(
                 "{} (Treiber {}, Vulkan {}.{})",
@@ -183,55 +119,14 @@ impl Context {
                 vk::api_version_minor(props.api_version)
             );
 
-            let priorities = [1.0f32];
-            let queue_info = [vk::DeviceQueueCreateInfo::default()
-                .queue_family_index(queue_family)
-                .queue_priorities(&priorities)];
-            let use_rt = want_rt && supports_rt(&instance, physical);
-            let mut device_extensions = vec![ash::khr::swapchain::NAME.as_ptr()];
-            if use_rt {
-                device_extensions.extend(RT_EXTENSIONS.map(CStr::as_ptr));
-            }
-            let can = instance.get_physical_device_features(physical);
-            let features = vk::PhysicalDeviceFeatures::default()
-                .sampler_anisotropy(can.sampler_anisotropy == vk::TRUE);
-            let max_anisotropy = if can.sampler_anisotropy == vk::TRUE {
-                props.limits.max_sampler_anisotropy
-            } else {
-                1.0
-            };
-            let mut features13 =
-                vk::PhysicalDeviceVulkan13Features::default().dynamic_rendering(true);
-            let mut v12 = vk::PhysicalDeviceVulkan12Features::default()
-                .buffer_device_address(true)
-                .descriptor_indexing(true)
-                .shader_sampled_image_array_non_uniform_indexing(true)
-                .descriptor_binding_partially_bound(true);
-            let mut accel = vk::PhysicalDeviceAccelerationStructureFeaturesKHR::default()
-                .acceleration_structure(true);
-            let mut query = vk::PhysicalDeviceRayQueryFeaturesKHR::default().ray_query(true);
-            let mut info = vk::DeviceCreateInfo::default()
-                .queue_create_infos(&queue_info)
-                .enabled_extension_names(&device_extensions)
-                .enabled_features(&features)
-                .push_next(&mut features13);
-            if use_rt {
-                info = info
-                    .push_next(&mut v12)
-                    .push_next(&mut accel)
-                    .push_next(&mut query);
-            }
-            let device = instance.create_device(physical, &info, None)?;
-            let rt = use_rt.then(|| {
-                let mut limits = vk::PhysicalDeviceAccelerationStructurePropertiesKHR::default();
-                let mut props = vk::PhysicalDeviceProperties2::default().push_next(&mut limits);
-                instance.get_physical_device_properties2(physical, &mut props);
-                RtFns {
-                    accel: ash::khr::acceleration_structure::Device::new(&instance, &device),
-                    scratch_align: limits.min_acceleration_structure_scratch_offset_alignment
-                        as u64,
-                }
-            });
+            let made = device::create(&instance, physical, queue_family, want)?;
+            let device::Made {
+                device,
+                rt,
+                low_latency,
+                diagnostics,
+                max_anisotropy,
+            } = made;
             let cache = super::cache::open(&device, &props);
             let queue = device.get_device_queue(queue_family, 0);
             let swapchain_loader = ash::khr::swapchain::Device::new(&instance, &device);
@@ -250,6 +145,8 @@ impl Context {
                 queue,
                 swapchain_loader,
                 rt,
+                low_latency,
+                diagnostics,
                 cache,
                 max_anisotropy,
                 gpu_name,
