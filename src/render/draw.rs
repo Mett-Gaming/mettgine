@@ -91,7 +91,12 @@ impl Renderer {
                 g.horizon = v4(r.fog_color, r.fog_density);
                 g.params[1] = r.dark as u8 as f32;
                 g.sway = r.sway.to_array();
-                g.extra = [r.decay, lamps as f32, self.lamp.cfg.contact, 0.0];
+                g.extra = [
+                    r.decay,
+                    lamps as f32,
+                    self.lamp.cfg.contact,
+                    self.camera_light,
+                ];
             }
         }
         g

@@ -14,7 +14,7 @@ struct Globals {
     params: vec4<f32>,    // x = Lampenzahl, y = dunkle Raeume, z = 1 Raeume / 0 Sonne, w = zweite Kamera
     sway: vec4<f32>,      // Schwanken der Boxen: x = seitlich, y = hoch, z = Gangende z, w = Gangende x
     // x = Verfall der Welt-Materialien (0..1), y = Zahl der Lampen mit Schatten,
-    // z = Verdunkelung in Ecken (0..1)
+    // z = Verdunkelung in Ecken (0..1), w = Licht an der Kamera in dunklen Raeumen (1 = ueblich)
     extra: vec4<f32>,
 };
 
@@ -208,7 +208,7 @@ fn shade_rooms(base: vec3<f32>, p: vec3<f32>, n_in: vec3<f32>) -> vec3<f32> {
         let dc = g.cam_pos.xyz - p;
         let lc = length(dc);
         let att = pow(max(1.0 - lc / 11.0, 0.0), 2.0);
-        light = light + vec3<f32>(0.75, 0.8, 0.7) * 0.55 * att * (max(dot(n, dc / max(lc, 0.001)), 0.0) * 0.8 + 0.2);
+        light = light + vec3<f32>(0.75, 0.8, 0.7) * 0.55 * g.extra.w * att * (max(dot(n, dc / max(lc, 0.001)), 0.0) * 0.8 + 0.2);
     }
     let ao = mix(0.75, 1.0, clamp(p.y / 1.2, 0.0, 1.0));
     let col = base * (ambient + light) * ao;

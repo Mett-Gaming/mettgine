@@ -138,7 +138,7 @@ struct Globals {
     ground: [f32; 4],
     params: [f32; 4],
     sway: [f32; 4],
-    /// x = Verfall, y = Lampen mit Schatten, z = Verdunkelung in Ecken
+    /// x = Verfall, y = Lampen mit Schatten, z = Verdunkelung in Ecken, w = Licht an der Kamera
     extra: [f32; 4],
 }
 
@@ -253,6 +253,8 @@ pub struct Renderer {
     mesh_bounds: Vec<Sphere>,
     skin_bounds: Vec<SkinBounds>,
     culling: bool,
+    /// Licht an der Kamera in dunklen Raeumen (1 = ueblich)
+    camera_light: f32,
     lists: DrawLists,
     timer: GpuTimer,
     /// moderne Grafik, entsteht beim ersten Gebrauch

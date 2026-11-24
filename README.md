@@ -125,6 +125,7 @@ Alles Sichtbare ist aus, bis das Spiel es einschaltet:
 
 ```rust
 renderer.set_msaa(4);              // Kantenglättung (1, 2, 4, 8)
+renderer.set_camera_light(2.0);    // Licht an der Kamera in dunklen Räumen (1 = üblich)
 renderer.set_font_mipmaps(true);   // kleine Schrift ruhiger
 // Räume: Schatten von Deckenlampen und dunkle Ecken, auch mit eigenen Welt-Materialien
 renderer.set_lamp_shadows(LampShadows { count: 10, contact: 0.6, ..Default::default() })?;

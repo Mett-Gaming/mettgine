@@ -57,6 +57,16 @@ impl Renderer {
         self.culling = on;
     }
 
+    /// Helligkeit des Lichts an der Kamera in dunklen Raeumen (`Rooms::dark`), z. B. fuer eine
+    /// Taschenlampe. 1 = ueblich (Vorgabe), 0 = aus, hoechstens 8.
+    pub fn set_camera_light(&mut self, brightness: f32) {
+        self.camera_light = if brightness.is_finite() {
+            brightness.clamp(0.0, 8.0)
+        } else {
+            1.0
+        };
+    }
+
     /// Partikel fuer das naechste `draw` (siehe `particles::Particles::instances`). Mehrere
     /// Aufrufe haengen an; nach dem Bild ist die Liste leer.
     pub fn queue_particles(&mut self, list: &[ParticleInst]) {

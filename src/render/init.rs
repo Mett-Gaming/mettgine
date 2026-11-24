@@ -317,6 +317,7 @@ impl Renderer {
                     .map(|s| SkinBounds::new(&s.vertices))
                     .collect(),
                 culling: true,
+                camera_light: 1.0,
                 lists: DrawLists::default(),
                 timer,
                 modern: None,
