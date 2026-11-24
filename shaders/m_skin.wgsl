@@ -18,7 +18,7 @@ fn vs_main(v: VsIn, @builtin(instance_index) ii: u32) -> VsOut {
     let p = k * vec4<f32>(v.pos, 1.0);
     let n = (o.model * (k * vec4<f32>(v.normal, 0.0))).xyz;
     let c = vec4<f32>(to_linear(v.color), 1.0);
-    return finish(o, (o.model * p).xyz, (o.prev * p).xyz, n, vec4<f32>(1.0, 0.0, 0.0, 1.0), vec2<f32>(0.0), c);
+    return finish(o, (o.model * p).xyz, skin_before(o, vec4<u32>(v.joints), v.weights, v.pos, p), n, vec4<f32>(1.0, 0.0, 0.0, 1.0), vec2<f32>(0.0), c);
 }
 
 @vertex

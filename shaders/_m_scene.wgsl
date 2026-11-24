@@ -34,7 +34,7 @@ struct Obj {
     model: mat4x4<f32>,
     prev: mat4x4<f32>,
     tint: vec4<f32>,
-    extra: vec4<f32>, // x = erster Knochen, y = Material, z = -, w = Eigenleuchten
+    extra: vec4<f32>, // x = erster Knochen, y = Material, z = erster alter Knochen + 1 (0 = keiner), w = Eigenleuchten
 };
 
 struct Lamp {

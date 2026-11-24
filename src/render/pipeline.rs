@@ -84,6 +84,30 @@ pub(crate) struct PipelineDesc<'a> {
     pub dynamic_cull: bool,
 }
 
+/// Rechen-Pipeline mit Einstieg `cs_main`.
+///
+/// # Safety
+/// `layout` gehoert zum Geraet, `code` ist gueltiges SPIR-V.
+pub(crate) unsafe fn create_compute(
+    d: &Gpu,
+    layout: vk::PipelineLayout,
+    code: &[u8],
+) -> Result<vk::Pipeline> {
+    let code = ash::util::read_spv(&mut std::io::Cursor::new(code))?;
+    let module =
+        d.create_shader_module(&vk::ShaderModuleCreateInfo::default().code(&code), None)?;
+    let stage = vk::PipelineShaderStageCreateInfo::default()
+        .stage(vk::ShaderStageFlags::COMPUTE)
+        .module(module)
+        .name(c"cs_main");
+    let info = vk::ComputePipelineCreateInfo::default()
+        .stage(stage)
+        .layout(layout);
+    let result = d.create_compute_pipelines(d.cache, &[info], None);
+    d.destroy_shader_module(module, None);
+    Ok(result.map_err(|(_, e)| e)?[0])
+}
+
 pub(crate) unsafe fn create_pipeline(
     d: &Gpu,
     layout: vk::PipelineLayout,

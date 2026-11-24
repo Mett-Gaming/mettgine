@@ -26,6 +26,8 @@ pub struct Accel {
     max_vertex: u32,
     primitives: u32,
     scratch: u64,
+    /// wird jedes Bild neu gebaut
+    fast: bool,
 }
 
 fn rt(ctx: &Context) -> Result<&RtFns> {
@@ -61,6 +63,22 @@ fn triangles(
         .flags(OPAQUE)
 }
 
+/// Dreiecke ohne Index, je Eckpunkt vier Zahlen.
+fn soup(vertices: u64, count: u32) -> vk::AccelerationStructureGeometryKHR<'static> {
+    let data = vk::AccelerationStructureGeometryTrianglesDataKHR::default()
+        .vertex_format(vk::Format::R32G32B32_SFLOAT)
+        .vertex_data(vk::DeviceOrHostAddressConstKHR {
+            device_address: vertices,
+        })
+        .vertex_stride(16)
+        .max_vertex((count * 3).saturating_sub(1))
+        .index_type(vk::IndexType::NONE_KHR);
+    vk::AccelerationStructureGeometryKHR::default()
+        .geometry_type(vk::GeometryTypeKHR::TRIANGLES)
+        .geometry(vk::AccelerationStructureGeometryDataKHR { triangles: data })
+        .flags(OPAQUE)
+}
+
 fn instances(data: u64) -> vk::AccelerationStructureGeometryKHR<'static> {
     let i = vk::AccelerationStructureGeometryInstancesDataKHR::default().data(
         vk::DeviceOrHostAddressConstKHR {
@@ -73,8 +91,9 @@ fn instances(data: u64) -> vk::AccelerationStructureGeometryKHR<'static> {
         .flags(OPAQUE)
 }
 
-fn flags(ty: vk::AccelerationStructureTypeKHR) -> vk::BuildAccelerationStructureFlagsKHR {
-    if ty == TOP {
+/// `fast` = wird jedes Bild neu gebaut.
+fn flags(fast: bool) -> vk::BuildAccelerationStructureFlagsKHR {
+    if fast {
         vk::BuildAccelerationStructureFlagsKHR::PREFER_FAST_BUILD
     } else {
         vk::BuildAccelerationStructureFlagsKHR::PREFER_FAST_TRACE
@@ -88,12 +107,13 @@ impl Accel {
         ty: vk::AccelerationStructureTypeKHR,
         geometry: vk::AccelerationStructureGeometryKHR,
         (max_vertex, primitives): (u32, u32),
+        fast: bool,
     ) -> Result<Self> {
         let fns = rt(ctx)?;
         let geometries = [geometry];
         let info = vk::AccelerationStructureBuildGeometryInfoKHR::default()
             .ty(ty)
-            .flags(flags(ty))
+            .flags(flags(fast))
             .geometries(&geometries);
         // SAFETY: gueltiges Geraet; freigegeben in `destroy`.
         unsafe {
@@ -126,6 +146,7 @@ impl Accel {
                 max_vertex,
                 primitives,
                 scratch: sizes.build_scratch_size,
+                fast,
             })
         }
     }
@@ -139,12 +160,17 @@ impl Accel {
     ) -> Result<Self> {
         let max_vertex = vertices.saturating_sub(1);
         let g = triangles(0, 0, max_vertex);
-        Self::create(ctx, arena, BOTTOM, g, (max_vertex, count))
+        Self::create(ctx, arena, BOTTOM, g, (max_vertex, count), false)
+    }
+
+    /// Fuer eine Figur mit bis zu `capacity` Dreiecken.
+    pub fn for_figure(ctx: &Context, arena: &mut Arena, capacity: u32) -> Result<Self> {
+        Self::create(ctx, arena, BOTTOM, soup(0, capacity), (0, capacity), true)
     }
 
     /// Fuer eine Szene mit bis zu `capacity` Objekten.
     pub fn for_instances(ctx: &Context, arena: &mut Arena, capacity: u32) -> Result<Self> {
-        Self::create(ctx, arena, TOP, instances(0), (0, capacity))
+        Self::create(ctx, arena, TOP, instances(0), (0, capacity), true)
     }
 
     /// Noetiger Arbeitsspeicher samt Spielraum zum Ausrichten.
@@ -168,7 +194,7 @@ impl Accel {
         let at = address(ctx, scratch).next_multiple_of(fns.scratch_align.max(1));
         let info = vk::AccelerationStructureBuildGeometryInfoKHR::default()
             .ty(ty)
-            .flags(flags(ty))
+            .flags(flags(self.fast))
             .mode(vk::BuildAccelerationStructureModeKHR::BUILD)
             .dst_acceleration_structure(self.handle)
             .geometries(&geometries)
@@ -198,6 +224,22 @@ impl Accel {
         );
         self.build(ctx, cmd, BOTTOM, g, scratch.buffer, self.primitives);
         Ok(scratch)
+    }
+
+    /// Figur bauen; `positions` = Puffer und Stelle darin.
+    ///
+    /// # Safety
+    /// Wie [`Accel::build_triangles`]; `scratch` ist gross genug.
+    pub unsafe fn build_figure(
+        &self,
+        ctx: &Context,
+        cmd: vk::CommandBuffer,
+        (positions, at): (vk::Buffer, u64),
+        scratch: vk::Buffer,
+        count: u32,
+    ) {
+        let g = soup(address(ctx, positions) + at, count);
+        self.build(ctx, cmd, BOTTOM, g, scratch, count);
     }
 
     /// Szene bauen.
@@ -275,6 +317,43 @@ pub unsafe fn after_copy(ctx: &Context, cmd: vk::CommandBuffer) {
             vk::AccessFlags::TRANSFER_WRITE,
             vk::AccessFlags::SHADER_READ,
         ),
+    );
+}
+
+/// Vor dem Ausrechnen von Figuren: Kopiertes lesen, Ausgabe des vorigen Bildes ist egal.
+///
+/// # Safety
+/// `cmd` muss aufgenommen werden.
+pub unsafe fn before_figures(ctx: &Context, cmd: vk::CommandBuffer) {
+    let compute = vk::PipelineStageFlags::COMPUTE_SHADER;
+    memory(
+        ctx,
+        cmd,
+        (
+            vk::PipelineStageFlags::TRANSFER | vk::PipelineStageFlags::FRAGMENT_SHADER,
+            compute,
+        ),
+        (
+            vk::AccessFlags::TRANSFER_WRITE,
+            vk::AccessFlags::SHADER_READ | vk::AccessFlags::SHADER_WRITE,
+        ),
+    );
+}
+
+/// Ausgerechnete Figuren duerfen gebaut und gelesen werden.
+///
+/// # Safety
+/// `cmd` muss aufgenommen werden.
+pub unsafe fn after_figures(ctx: &Context, cmd: vk::CommandBuffer) {
+    let build = vk::PipelineStageFlags::ACCELERATION_STRUCTURE_BUILD_KHR;
+    memory(
+        ctx,
+        cmd,
+        (
+            vk::PipelineStageFlags::COMPUTE_SHADER,
+            build | vk::PipelineStageFlags::FRAGMENT_SHADER,
+        ),
+        (vk::AccessFlags::SHADER_WRITE, vk::AccessFlags::SHADER_READ),
     );
 }
 

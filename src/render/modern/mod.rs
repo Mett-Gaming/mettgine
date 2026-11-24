@@ -18,6 +18,7 @@ mod copy;
 mod gpu;
 mod memory;
 mod model;
+mod motion;
 mod pipes;
 mod post;
 mod prepare;
@@ -35,6 +36,7 @@ pub(crate) use post::record_images;
 pub const MAX_UI_IMAGES: usize = sets::IMAGE_SETS;
 
 pub use model::*;
+pub use motion::MotionIds;
 pub use types::*;
 
 use super::context::Context;
@@ -113,6 +115,7 @@ pub(crate) struct Modern {
     targets: Option<Targets>,
     frames: Vec<FrameBuffers>,
     lists: Lists,
+    motion: motion::Motion,
     clusters: clusters::Clusters,
     views: Views,
     tiles: Vec<atlas::Tile>,
@@ -212,6 +215,7 @@ impl Modern {
             fixed,
             targets: None,
             lists: Lists::default(),
+            motion: motion::Motion::default(),
             clusters: clusters::Clusters::default(),
             views: Views::default(),
             tiles: Vec::new(),
@@ -256,6 +260,7 @@ impl Modern {
         self.ensure_targets(i.ctx, Wants::new(i.out, &s.features))?;
         if s.cut {
             self.history_valid = false;
+            self.motion.forget();
         }
         let cam = &s.camera;
         let plain = Plain {
@@ -267,7 +272,8 @@ impl Modern {
             statics: i.statics,
             mesh_models: &self.mesh_models,
         };
-        self.lists.collect(f, s, &self.store, &plain);
+        self.lists
+            .collect(f, s, &self.store, &plain, &mut self.motion);
         let cascades = self.sun_views(s);
         let lights = &s.lights[..s.lights.len().min(clusters::MAX_LIGHTS)];
         self.lamp_views(s, lights);
@@ -457,6 +463,7 @@ impl Modern {
         post.used = used;
         post.finish();
         mark("Nachbearbeitung HDR");
+        self.motion.finish(f, s);
         self.history_valid = true;
         self.ping ^= 1;
         self.number += 1;
@@ -470,8 +477,14 @@ impl Modern {
     pub unsafe fn upload_only(&mut self, ctx: &Context, cmd: vk::CommandBuffer) {
         self.store.begin_frame(ctx, cmd);
         // die naechste moderne Szene beginnt ohne Verlauf
+        self.motion.forget();
         self.history_valid = false;
         self.prev_view_proj = None;
+    }
+
+    /// Knochen des letzten Bildes, sie kommen hinter die `base` Knochen dieses Bildes.
+    pub fn old_bones(&mut self, base: usize) -> &[[[f32; 4]; 4]] {
+        self.motion.bones(base)
     }
 
     fn batches(&self, r: &Range<usize>) -> &[Batch] {

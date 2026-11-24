@@ -3,6 +3,7 @@
 
 use super::gpu::GpuObj;
 use super::model::*;
+use super::motion::{Before, List, Motion};
 use super::store::Store;
 use super::types::*;
 use crate::cull::{Frustum, SkinBounds, Sphere};
@@ -106,16 +107,23 @@ pub struct Plain<'a> {
 
 impl Lists {
     /// Objekte des Bildes sammeln und sortieren.
-    pub fn collect(&mut self, f: &FrameInput, s: &SceneInput, store: &Store, plain: &Plain) {
+    pub fn collect(
+        &mut self,
+        f: &FrameInput,
+        s: &SceneInput,
+        store: &Store,
+        plain: &Plain,
+        motion: &mut Motion,
+    ) {
         self.objs.clear();
         self.order.clear();
         self.batches.clear();
         self.items.clear();
         (self.drawn, self.culled) = (0, 0);
-        self.add_objects(s, store);
+        self.add_objects(s, store, motion);
         self.add_boxes(plain);
-        self.add_meshes(f, plain);
-        self.add_skins(f, plain);
+        self.add_meshes((f, s), plain, motion);
+        self.add_skins((f, s), plain, motion);
         self.items.sort_unstable_by_key(|i| (i.blend, i.key, i.obj));
     }
 
@@ -127,8 +135,8 @@ impl Lists {
         self.objs.push(o);
     }
 
-    fn add_objects(&mut self, s: &SceneInput, store: &Store) {
-        for o in s.objects {
+    fn add_objects(&mut self, s: &SceneInput, store: &Store, motion: &mut Motion) {
+        for (n, o) in s.objects.iter().enumerate() {
             let (Some(model), Some(mat)) = (store.model(o.model), store.material(o.material))
             else {
                 continue;
@@ -142,11 +150,15 @@ impl Lists {
                 material: o.material.0,
                 model: o.model.0,
             };
+            let id = s.ids.objects.get(n).copied().unwrap_or(0);
+            let before = motion.track(List::Objects, id, o.transform, o.first_bone);
+            let old_bones = before.filter(|_| skinned).map_or(0.0, |b| b.bones);
+            let previous = o.previous.or(before.map(|b| b.model));
             let obj = GpuObj {
                 model: o.transform.to_cols_array_2d(),
-                prev: o.previous.unwrap_or(o.transform).to_cols_array_2d(),
+                prev: previous.unwrap_or(o.transform).to_cols_array_2d(),
                 tint: o.tint.to_array(),
-                extra: [o.first_bone as f32, o.material.0 as f32, 0.0, 0.0],
+                extra: [o.first_bone as f32, o.material.0 as f32, old_bones, 0.0],
             };
             // mit Knochen ist die Ausdehnung nicht bekannt
             let sphere = (!skinned).then(|| model.bounds.transformed(&o.transform));
@@ -194,10 +206,19 @@ impl Lists {
         }
     }
 
-    fn add_meshes(&mut self, f: &FrameInput, plain: &Plain) {
-        let solid = plain.statics.iter().chain(f.meshes).map(|m| (m, false));
-        let ghosts = f.ghosts.iter().map(|m| (m, true));
-        for (m, ghost) in solid.chain(ghosts) {
+    fn add_meshes(
+        &mut self,
+        (f, s): (&FrameInput, &SceneInput),
+        plain: &Plain,
+        motion: &mut Motion,
+    ) {
+        let id = |k| s.ids.meshes.get(k).copied().unwrap_or(0);
+        let fixed = plain.statics.iter().map(|m| (m, false, 0));
+        let moving = f.meshes.iter().enumerate();
+        let moving = moving.map(|(k, m)| (m, false, id(k)));
+        let ghosts = f.ghosts.iter().map(|m| (m, true, 0));
+        for (m, ghost, id) in fixed.chain(moving).chain(ghosts) {
+            let before = motion.track(List::Meshes, id, m.model, 0);
             let Some(bounds) = plain.mesh_bounds.get(m.mesh) else {
                 continue;
             };
@@ -213,15 +234,23 @@ impl Lists {
                 shadow: m.shadow && !ghost,
                 blend: ghost,
             };
-            self.push(
-                plain_obj(&m.model, m.tint, 0, m.blink, ghost, plain.material),
-                item,
-            );
+            let mut obj = plain_obj(&m.model, m.tint, 0, m.blink, ghost, plain.material);
+            if let Some(b) = before {
+                obj.prev = b.model.to_cols_array_2d();
+            }
+            self.push(obj, item);
         }
     }
 
-    fn add_skins(&mut self, f: &FrameInput, plain: &Plain) {
-        for s in f.skins {
+    fn add_skins(
+        &mut self,
+        (f, scene): (&FrameInput, &SceneInput),
+        plain: &Plain,
+        motion: &mut Motion,
+    ) {
+        for (k, s) in f.skins.iter().enumerate() {
+            let id = scene.ids.skins.get(k).copied().unwrap_or(0);
+            let before = motion.track(List::Skins, id, s.model, s.first_bone);
             if plain.skin_bounds.is_empty() {
                 return;
             }
@@ -234,7 +263,7 @@ impl Lists {
                 shadow: !s.ghost,
                 blend: s.ghost,
             };
-            let obj = plain_obj(
+            let mut obj = plain_obj(
                 &s.model,
                 s.tint,
                 s.first_bone,
@@ -242,6 +271,10 @@ impl Lists {
                 s.ghost,
                 plain.material,
             );
+            if let Some(Before { model, bones }) = before {
+                obj.prev = model.to_cols_array_2d();
+                obj.extra[2] = bones;
+            }
             self.push(obj, item);
         }
     }
@@ -252,7 +285,7 @@ impl Lists {
         self.gather(shadow, false, |s| frustum.sees(s))
     }
 
-    /// Schattensicht nur fuer das, was Strahlen nicht sehen (Figuren).
+    /// Schattensicht nur fuer das, was Strahlen nicht sehen.
     pub fn view_without_rays(&mut self, view_proj: &Mat4) -> Range<usize> {
         let frustum = Frustum::new(view_proj);
         self.gather(true, true, |s| frustum.sees(s))
@@ -262,7 +295,7 @@ impl Lists {
     pub fn rt_items(&self) -> Vec<RtItem> {
         self.items
             .iter()
-            .filter(|i| i.key.kind == Kind::Object && !i.blend)
+            .filter(|i| !i.blend && i.key.kind != Kind::Mesh)
             .map(|i| RtItem {
                 kind: i.key.kind,
                 obj: i.obj,
@@ -290,7 +323,7 @@ impl Lists {
         let start = self.batches.len();
         let mut last: Option<Key> = None;
         for i in &self.items {
-            let ray = skip_rays && i.key.kind == Kind::Object;
+            let ray = skip_rays && i.key.kind != Kind::Mesh;
             if i.blend || ray || (shadow && !i.shadow) {
                 continue;
             }

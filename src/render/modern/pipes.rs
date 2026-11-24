@@ -129,6 +129,8 @@ pub struct Pipes {
     pub post_layout: vk::PipelineLayout,
     kinds: [KindPipes; 4],
     pub sky: vk::Pipeline,
+    /// Bewegung des Himmels im Tiefen-Durchgang
+    pub sky_move: vk::Pipeline,
     pub particle: vk::Pipeline,
     pub decal: vk::Pipeline,
     pub post: PostPipes,
@@ -304,6 +306,12 @@ impl Pipes {
                 depth_write: false,
                 ..scene_desc(spv!("m_sky.vert"), spv!("m_sky.frag"), &[], &[])
             };
+            let sky_move = PipelineDesc {
+                color_format: Some(NORMAL),
+                more_colors: &[MOTION],
+                depth_write: false,
+                ..scene_desc(spv!("m_skymove.vert"), spv!("m_skymove.frag"), &[], &[])
+            };
             let particle = PipelineDesc {
                 color_format: Some(HDR),
                 depth_write: false,
@@ -324,6 +332,7 @@ impl Pipes {
                 post_layout,
                 kinds: [k(KINDS[0])?, k(KINDS[1])?, k(KINDS[2])?, k(KINDS[3])?],
                 sky: create_pipeline(d, layout, &sky)?,
+                sky_move: create_pipeline(d, layout, &sky_move)?,
                 particle: create_pipeline(d, layout, &particle)?,
                 decal: create_pipeline(d, layout, &decal)?,
                 post: post_pipes(d, post_layout, ldr)?,
@@ -370,6 +379,7 @@ impl Pipes {
             p.compose,
             p.sharpen,
             self.sky,
+            self.sky_move,
             self.particle,
             self.decal,
         ] {

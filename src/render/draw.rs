@@ -129,6 +129,10 @@ impl Renderer {
         let bone_count = f.bones.len().min(HARD_BONES);
         self.scratch_bones
             .extend(f.bones[..bone_count].iter().map(|m| m.to_cols_array_2d()));
+        if let (Some(m), Some(_)) = (&mut self.modern, f.scene) {
+            self.scratch_bones
+                .extend_from_slice(m.old_bones(bone_count));
+        }
         let ui_count = f.ui.len().min(HARD_UI_VERTS) / 3 * 3;
         let particles = self.particles.len().min(HARD_PARTICLES);
         self.grow_buffers(fi, ui_count, particles)?;

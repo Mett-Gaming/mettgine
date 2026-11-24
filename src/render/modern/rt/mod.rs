@@ -2,9 +2,13 @@
 //! nur mit `Config::ray_tracing` und einer Karte, die es kann.
 //!
 //! Set 1 der Strahlen-Shader: 0 = Szene, 1 = Dreiecke, 2 = Objekte, 3 = Tiefe, 4 = Normale und
-//! Rauheit, 5 = Farbtexturen (Feld), 6 = Sampler. Animierte Figuren sind (noch) nicht dabei.
+//! Rauheit, 5 = Farbtexturen (Feld), 6 = Sampler,
+//! 7 = Dreiecke der Figuren (`figures`).
 
 mod accel;
+mod figures;
+
+pub use figures::Source;
 
 use super::super::context::Context;
 use super::super::util::Buffer;
@@ -38,7 +42,8 @@ struct GpuInfo {
     first: u32,
     material: u32,
     glow: f32,
-    pad: u32,
+    /// 1 = Dreiecke der Figuren
+    figure: u32,
 }
 
 /// Ein Modell.
@@ -73,6 +78,7 @@ pub struct Rt {
     tris_changed: bool,
     tlas: Vec<Tlas>,
     trash: Vec<(u64, Trash)>,
+    figures: figures::Figures,
     frame: u64,
     pub layout: vk::DescriptorSetLayout,
     pool: vk::DescriptorPool,
@@ -86,7 +92,7 @@ const ACCEL: vk::DescriptorType = vk::DescriptorType::ACCELERATION_STRUCTURE_KHR
 const STORAGE: vk::DescriptorType = vk::DescriptorType::STORAGE_BUFFER;
 const IMAGE: vk::DescriptorType = vk::DescriptorType::SAMPLED_IMAGE;
 const SAMPLER: vk::DescriptorType = vk::DescriptorType::SAMPLER;
-const BINDINGS: [(vk::DescriptorType, u32); 7] = [
+const BINDINGS: [(vk::DescriptorType, u32); 8] = [
     (ACCEL, 1),
     (STORAGE, 1),
     (STORAGE, 1),
@@ -94,6 +100,7 @@ const BINDINGS: [(vk::DescriptorType, u32); 7] = [
     (IMAGE, 1),
     (IMAGE, MAX_TEXTURES as u32),
     (SAMPLER, 1),
+    (STORAGE, 1),
 ];
 
 impl Rt {
@@ -168,6 +175,7 @@ impl Rt {
                 tris_changed: false,
                 tlas: (0..FRAMES_IN_FLIGHT).map(|_| Tlas::default()).collect(),
                 trash: Vec::new(),
+                figures: figures::Figures::new(ctx)?,
                 frame: 0,
                 layout,
                 pool,
@@ -222,11 +230,17 @@ impl Rt {
         (cmd, fi): (vk::CommandBuffer, usize),
         store: &mut Store,
         lists: &Lists,
+        source: Source,
         (depth, normal): (vk::ImageView, vk::ImageView),
     ) -> Result<()> {
         self.begin_frame(ctx, &mut store.arena);
         self.build_models(ctx, cmd, store)?;
         self.update_tris(ctx)?;
+        let mut old = Vec::new();
+        self.figures
+            .record(ctx, (cmd, fi), store, lists, source, &mut old)?;
+        let frame = self.frame;
+        self.trash.extend(old.into_iter().map(|t| (frame, t)));
         let items = lists.rt_items();
         self.fill(ctx, fi, lists, &items)?;
         self.build_scene(ctx, cmd, fi, &mut store.arena)?;
@@ -293,8 +307,17 @@ impl Rt {
         let mut instances = Vec::with_capacity(items.len());
         let mut infos = Vec::with_capacity(items.len());
         for it in items {
-            debug_assert!(it.kind == Kind::Object);
-            let Some(b) = self.blas.get(&it.model) else {
+            let found = match it.kind {
+                Kind::Object => self
+                    .blas
+                    .get(&it.model)
+                    .map(|b| (b.accel.address, b.first_tri, 0)),
+                _ => {
+                    let f = self.figures.found.get(&it.obj);
+                    f.map(|f| (f.address, f.first_tri, 1))
+                }
+            };
+            let Some((address, first, figure)) = found else {
                 continue;
             };
             let o = &lists.objs[it.obj as usize];
@@ -305,17 +328,13 @@ impl Rt {
                     rows[r * 4 + c] = m[c][r];
                 }
             }
-            instances.push(accel::instance(
-                rows,
-                instances.len() as u32,
-                b.accel.address,
-            ));
+            instances.push(accel::instance(rows, instances.len() as u32, address));
             infos.push(GpuInfo {
                 tint: o.tint,
-                first: b.first_tri,
+                first,
                 material: it.material,
                 glow: o.extra[3],
-                pad: 0,
+                figure,
             });
         }
         self.count = instances.len() as u32;
@@ -383,6 +402,8 @@ impl Rt {
                 .range(vk::WHOLE_SIZE)]
         };
         let (tris, infos) = (buffer(self.tri_buf.buffer), buffer(infos.buffer));
+        let figures = self.figures.tris(fi).unwrap_or(self.tri_buf.buffer);
+        let figures = buffer(figures);
         let image = |view, layout| {
             [vk::DescriptorImageInfo::default()
                 .image_view(view)
@@ -402,6 +423,7 @@ impl Rt {
             w(3).image_info(&depth),
             w(4).image_info(&normal),
             w(6).image_info(&sampler),
+            w(7).buffer_info(&figures),
         ];
         if !textures.is_empty() {
             writes.push(w(5).image_info(&textures));
@@ -431,6 +453,7 @@ impl Rt {
         for (_, t) in std::mem::take(&mut self.trash) {
             release(ctx, arena, t);
         }
+        self.figures.destroy(ctx, arena);
         let d = &ctx.device;
         self.tri_buf.destroy(d);
         d.destroy_sampler(self.sampler, None);

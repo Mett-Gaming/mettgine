@@ -68,7 +68,19 @@ impl Modern {
             return Ok(());
         };
         let views = (t.depth.view, t.normal.view);
-        rt.record(i.ctx, (i.cmd, i.fi), &mut self.store, &self.lists, views)
+        let source = super::rt::Source {
+            bones: i.bones.buffer,
+            skins: i.skin_vertices,
+            ranges: i.skin_ranges,
+        };
+        rt.record(
+            i.ctx,
+            (i.cmd, i.fi),
+            &mut self.store,
+            &self.lists,
+            source,
+            views,
+        )
     }
 }
 

@@ -306,6 +306,12 @@ impl Modern {
         set_viewport(d, cmd, i.extent);
         self.bind_frame(i, 0);
         self.draw(i, Stage::Pre, self.batches(&self.views.camera));
+        // nur wer den Verlauf nutzt, braucht die Bewegung des Himmels
+        if t.wants.taa {
+            d.cmd_bind_pipeline(cmd, GFX, self.pipes.sky_move);
+            self.bind_any_material(i);
+            d.cmd_draw(cmd, 3, 1, 0, 0);
+        }
         d.cmd_end_rendering(cmd);
         let images = [
             depth_read(

@@ -18,11 +18,11 @@ fn vertex_buffer<T: Pod>(ctx: &Context, items: &[&[T]]) -> Result<(Buffer, Vec<(
         all.extend_from_slice(v);
     }
     let bytes: &[u8] = bytemuck::cast_slice(&all);
-    let buf = Buffer::new_host(
-        ctx,
-        bytes.len().max(64) as u64,
-        vk::BufferUsageFlags::VERTEX_BUFFER,
-    )?;
+    let mut usage = vk::BufferUsageFlags::VERTEX_BUFFER;
+    if ctx.rt.is_some() {
+        usage |= vk::BufferUsageFlags::STORAGE_BUFFER; // Figuren fuer Strahlen
+    }
+    let buf = Buffer::new_host(ctx, bytes.len().max(64) as u64, usage)?;
     buf.write(bytes);
     Ok((buf, ranges))
 }

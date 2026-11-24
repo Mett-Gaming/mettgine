@@ -32,6 +32,7 @@ fn mettgine_shader(path: &str, includes: &[&str]) {
         let suffix = match entry_point {
             "vs_main" => "vert",
             "fs_main" => "frag",
+            "cs_main" => "comp",
             other => other,
         };
         let mut options = naga::back::spv::Options::default();

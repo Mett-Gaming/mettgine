@@ -174,7 +174,8 @@ impl Store {
         let mut index = vk::BufferUsageFlags::INDEX_BUFFER;
         if ctx.rt.is_some() {
             let rays = vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
-                | vk::BufferUsageFlags::ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_KHR;
+                | vk::BufferUsageFlags::ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_KHR
+                | vk::BufferUsageFlags::STORAGE_BUFFER;
             vertex |= rays;
             index |= rays;
         }

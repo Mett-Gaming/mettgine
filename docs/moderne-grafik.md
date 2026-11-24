@@ -28,6 +28,16 @@ Modelle (`MeshDraw`), Figuren (`SkinDraw`), feste Modelle und Welt-Boxen werden 
 | `ray_tracing` | Schatten, Verdeckung, Streulicht, Spiegelungen aus Strahlen |
 | `path_tracing` | das ganze Bild aus Strahlen |
 
+## Bewegung
+
+TAA und Hochskalieren müssen wissen, wo ein Ding im letzten Bild war. Dafür gibt das Spiel Kennungen mit, parallel zu seinen Zeichenaufrufen:
+
+```rust
+ids: MotionIds { meshes: &[1, 2, 3], skins: &[1], ..Default::default() },   // in SceneInput; 0 = keine
+```
+
+Die Engine merkt sich Lage und Knochen ein Bild lang. Ohne Kennung gilt ein Ding als unbewegt und zieht Schlieren. Der Himmel ist immer dabei. Ein gesetztes `ObjectDraw::previous` hat Vorrang. Partikel und Halbtransparentes haben keine Bewegung.
+
 ## Raytracing
 
 Es läuft direkt über Vulkan (`VK_KHR_acceleration_structure`, `VK_KHR_ray_query`) und damit auf jeder Karte, die diese Erweiterungen anbietet. Einschalten mit `Config::ray_tracing`; ob es klappt, sagt `Renderer::ray_tracing()`. Sonst gilt die übliche Grafik. Ausprobiert wurde es bisher nur auf einer NVIDIA-Karte.
@@ -35,21 +45,21 @@ Es läuft direkt über Vulkan (`VK_KHR_acceleration_structure`, `VK_KHR_ray_quer
 Entrauscht wird mit eigenen Durchgängen: über mehrere Bilder mitteln (`p_accum`), dann kantentreu glätten (`p_atrous`).
 
 **Grenzen:**
-- Animierte Figuren erscheinen nicht in Spiegelungen und im Pathtracing. Ihre Schatten kommen weiter aus der Schattenkarte.
+- Höchstens 128 animierte Figuren je Bild sind für Strahlen sichtbar; sie werden jedes Bild auf der Karte ausgerechnet.
 - Halbtransparentes und Partikel fehlen im Pathtracing.
 - Strahlen sehen höchstens 512 Farbtexturen; Normalenkarten und Rauheitskarten getroffener Flächen zählen nicht.
 - Bei schnellen Bewegungen ziehen Streulicht und Spiegelungen kurz nach.
 
 ## Techniken der Hersteller
 
-Nicht eingebaut. Sie brauchen fremde, teils geschlossene Pakete je Hersteller, die mit jedem Spiel ausgeliefert und gepflegt werden müssten. Das passt nicht zu den Regeln der Engine: kein SDK zum Bauen nötig, Abhängigkeiten nur unter MIT, Apache-2.0, BSD, Zlib oder CC0.
+Noch nicht eingebaut. Erlaubt sind sie als wahlfreie Ausnahme (`AGENTS.md`, 7.): hinter eigenen Cargo-Features, zur Laufzeit geladen, nie im Archiv.
 
 | Technik | Was dafür nötig wäre | Was die Engine stattdessen hat |
 |---|---|---|
 | DLSS (Hochskalieren), Streamline | NVIDIA-Bibliotheken mit eigener Lizenz, Anmeldung der Anwendung, eigene Schicht um Instanz, Gerät und Swapchain | `render_scale` mit TAA |
 | DLSS Frame Generation | Streamline samt Reflex; ersetzt das Anzeigen der Bilder | – |
 | DLSS Ray Reconstruction | wie DLSS, zusätzlich Albedo, Spiegelanteil, Rauheit und Trefferabstand als Bilder | eigenes Entrauschen |
-| FSR (Hochskalieren, Bilderzeugung) | FidelityFX SDK (C++); die Bilderzeugung ersetzt die Swapchain | `render_scale` mit TAA, `sharpen` |
+| FSR (Hochskalieren, Bilderzeugung) | FidelityFX-DLLs (seit 2.4 auch für Vulkan); die Bilderzeugung ersetzt die Swapchain | `render_scale` mit TAA, `sharpen` |
 | FSR Ray Regeneration | nur bestimmte AMD-Karten und Treiber | eigenes Entrauschen |
 | XeSS | Bibliothek von Intel mit eigener Lizenz | `render_scale` mit TAA |
 

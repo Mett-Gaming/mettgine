@@ -16,7 +16,7 @@ struct Info {
     first: u32,    // erstes Dreieck
     material: u32,
     glow: f32,
-    pad: u32,
+    figure: u32,   // 1 = Dreiecke in `figure_tris`
 };
 
 @group(1) @binding(0) var acc: acceleration_structure;
@@ -26,6 +26,7 @@ struct Info {
 @group(1) @binding(4) var normal_img: texture_2d<f32>;
 @group(1) @binding(5) var textures: binding_array<texture_2d<f32>, 512>;
 @group(1) @binding(6) var tex_samp: sampler;
+@group(1) @binding(7) var<storage, read> figure_tris: array<Tri>;
 
 struct Push {
     a: vec4<f32>,
@@ -107,8 +108,15 @@ struct Found {
     m: mat4x3<f32>,
 };
 
+fn triangle(info: Info, k: u32) -> Tri {
+    if (info.figure == 1u) {
+        return figure_tris[info.first + k];
+    }
+    return tris[info.first + k];
+}
+
 fn uv_of(info: Info, f: Found) -> vec2<f32> {
-    let tri = tris[info.first + f.tri];
+    let tri = triangle(info, f.tri);
     let b = vec3<f32>(1.0 - f.bary.x - f.bary.y, f.bary.x, f.bary.y);
     return vec2<f32>(
         tri.n0.w * b.x + tri.n1.w * b.y + tri.n2.w * b.z,
@@ -192,7 +200,7 @@ fn closest(o: vec3<f32>, d: vec3<f32>, far: f32, cone: f32) -> Hit {
         return h;
     }
     let info = infos[f.info];
-    let tri = tris[info.first + f.tri];
+    let tri = triangle(info, f.tri);
     let b = vec3<f32>(1.0 - f.bary.x - f.bary.y, f.bary.x, f.bary.y);
     let n = tri.n0.xyz * b.x + tri.n1.xyz * b.y + tri.n2.xyz * b.z;
     let m = mats[info.material];

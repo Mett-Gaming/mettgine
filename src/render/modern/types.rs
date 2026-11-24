@@ -180,8 +180,7 @@ pub enum Exposure {
 }
 
 /// Raytracing-Zusaetze; wirken nur, wenn [`super::super::Renderer::ray_tracing`] es meldet, sonst
-/// bleibt die uebliche Grafik. Animierte Figuren werfen weiter Schatten aus der Schattenkarte und
-/// erscheinen nicht in Spiegelungen.
+/// bleibt die uebliche Grafik. Bis zu 128 animierte Figuren je Bild sind dabei.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct RayTracing {
     /// Sonnenschatten aus Strahlen
@@ -205,7 +204,7 @@ impl RayTracing {
     }
 }
 
-/// Das ganze Bild aus Strahlen. Halbtransparentes, Partikel und animierte Figuren fehlen.
+/// Das ganze Bild aus Strahlen. Halbtransparentes und Partikel fehlen.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PathTracing {
     pub bounces: u32,
@@ -314,6 +313,8 @@ pub struct SceneInput<'a> {
     /// Bilder fuer Partikel: Material (nur seine Farbtextur zaehlt), Spalten, Zeilen. Welches Feld
     /// ein Partikel zeigt, steht in `ParticleInst::extra[3]` (0 = keins, 1 = erstes)
     pub particle_atlas: Option<(super::model::MaterialId, u32, u32)>,
+    /// Kennungen fuer die Bewegung (TAA, Hochskalieren)
+    pub ids: super::motion::MotionIds<'a>,
     /// vergangene Zeit seit dem letzten Bild (Sekunden), fuer die Belichtung
     pub dt: f32,
     /// Kamerasprung: Verlauf (TAA, Belichtung) verwerfen
@@ -338,6 +339,7 @@ impl SceneInput<'_> {
             features: Features::default(),
             plain_roughness: 0.75,
             particle_atlas: None,
+            ids: Default::default(),
             dt: 1.0 / 60.0,
             cut: false,
         }

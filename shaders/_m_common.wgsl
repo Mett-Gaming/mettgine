@@ -63,6 +63,14 @@ fn skin_matrix(base: u32, j: vec4<u32>, w: vec4<f32>) -> mat4x4<f32> {
         + bones[base + j.z] * w.z + bones[base + j.w] * w.w;
 }
 
+// Eckpunkt einer Figur im letzten Bild (`p` = jetzt, falls die alten Knochen fehlen)
+fn skin_before(o: Obj, j: vec4<u32>, w: vec4<f32>, pos: vec3<f32>, p: vec4<f32>) -> vec3<f32> {
+    if (o.extra.z < 0.5) {
+        return (o.prev * p).xyz;
+    }
+    return (o.prev * (skin_matrix(u32(o.extra.z - 0.5), j, w) * vec4<f32>(pos, 1.0))).xyz;
+}
+
 // Vertexfarben der einfachen Modelle sind Anzeigewerte
 fn to_linear(c: vec3<f32>) -> vec3<f32> {
     return pow(max(c, vec3<f32>(0.0)), vec3<f32>(2.2));

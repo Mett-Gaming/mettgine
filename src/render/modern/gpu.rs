@@ -21,7 +21,7 @@ pub struct GpuObj {
     pub model: [[f32; 4]; 4],
     pub prev: [[f32; 4]; 4],
     pub tint: [f32; 4],
-    /// erster Knochen, Material, -, Eigenleuchten
+    /// erster Knochen, Material, erster alter Knochen + 1 (0 = keiner), Eigenleuchten
     pub extra: [f32; 4],
 }
 
