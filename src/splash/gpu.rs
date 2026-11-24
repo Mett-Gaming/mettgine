@@ -177,7 +177,7 @@ impl Splash {
         };
         let f2 = vk::Format::R32G32_SFLOAT;
         let pipeline = create_pipeline(
-            d,
+            &ctx.gpu(),
             layout,
             &PipelineDesc {
                 vs_entry: c"vs_main",

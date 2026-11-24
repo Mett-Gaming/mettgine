@@ -62,6 +62,8 @@ pub struct Context {
     pub queue: vk::Queue,
     pub swapchain_loader: ash::khr::swapchain::Device,
     pub rt: Option<RtFns>,
+    /// uebersetzte Shader (siehe `cache`)
+    pub cache: vk::PipelineCache,
     /// hoechste Filterstufe schraeg gesehener Texturen (1 = kann die Karte nicht)
     pub max_anisotropy: f32,
     /// Name der Grafikkarte (fuer Absturzberichte)
@@ -230,6 +232,7 @@ impl Context {
                         as u64,
                 }
             });
+            let cache = super::cache::open(&device, &props);
             let queue = device.get_device_queue(queue_family, 0);
             let swapchain_loader = ash::khr::swapchain::Device::new(&instance, &device);
             let mem_props = instance.get_physical_device_memory_properties(physical);
@@ -247,6 +250,7 @@ impl Context {
                 queue,
                 swapchain_loader,
                 rt,
+                cache,
                 max_anisotropy,
                 gpu_name,
             })
@@ -257,6 +261,7 @@ impl Context {
 impl Drop for Context {
     fn drop(&mut self) {
         unsafe {
+            super::cache::close(&self.device, self.cache);
             self.device.destroy_device(None);
             self.surface_loader.destroy_surface(self.surface, None);
             if let Some((loader, messenger)) = self.debug.take() {

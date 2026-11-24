@@ -2,6 +2,7 @@
 //! `gpu::SkinVertex` (68 Byte), [`UiVertex`] (32 Byte), `particles::ParticleInst` (48 Byte, je
 //! Instanz). Welt-Boxen brauchen keine Vertices (Wuerfel aus dem Vertex-Index).
 
+use super::cache::Gpu;
 use super::pipeline::{create_pipeline, Blend, PipelineDesc};
 use super::*;
 use crate::gpu::{MeshVertex, SkinVertex};
@@ -177,7 +178,7 @@ pub(super) struct SceneSetup {
 
 /// Pipelines der Szene fuer die gegebene Kantenglaettung.
 pub(super) unsafe fn create_scene_pipelines(
-    d: &ash::Device,
+    d: &Gpu,
     layout: vk::PipelineLayout,
     samples: vk::SampleCountFlags,
     setup: &SceneSetup,
@@ -274,7 +275,7 @@ pub(super) fn screen_desc<'a>(
 }
 
 pub(super) unsafe fn create_pipelines(
-    d: &ash::Device,
+    d: &Gpu,
     desc: &Descriptors,
     swapchain_format: vk::Format,
     setup: &SceneSetup,

@@ -9,6 +9,7 @@ impl Renderer {
         self.wait_idle()?;
         fill(&self.ctx, &mut self.box_buf, bytemuck::cast_slice(boxes))?;
         fill(&self.ctx, &mut self.light_buf, bytemuck::cast_slice(lights))?;
+        self.box_runs = Runs::of_boxes(boxes);
         self.boxes = boxes.to_vec();
         self.box_count = boxes.len() as u32;
         self.light_count = lights.len() as u32;
@@ -23,17 +24,10 @@ impl Renderer {
         let mut sorted: Vec<&MeshDraw> = statics.iter().filter(|m| m.mesh < known).collect();
         sorted.sort_by_key(|m| m.mesh);
         let insts: Vec<GpuInst> = sorted.iter().map(|m| GpuInst::mesh(m, true)).collect();
-        let mut groups: Vec<Group> = Vec::new();
-        for (i, m) in sorted.iter().enumerate() {
-            match groups.last_mut() {
-                Some(g) if g.mesh == m.mesh as u32 => g.count += 1,
-                _ => groups.push(Group {
-                    mesh: m.mesh as u32,
-                    first_inst: i as u32,
-                    count: 1,
-                }),
-            }
-        }
+        let runs = Runs::new(sorted.iter().map(|m| {
+            let sphere = self.mesh_bounds[m.mesh].transformed(&m.model);
+            (m.mesh as u32, sphere)
+        }));
         self.wait_idle()?;
         fill(
             &self.ctx,
@@ -41,7 +35,7 @@ impl Renderer {
             bytemuck::cast_slice(&insts),
         )?;
         self.statics = statics.to_vec();
-        self.static_groups = groups;
+        self.static_runs = runs;
         self.write_all_descriptors();
         Ok(())
     }

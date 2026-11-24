@@ -16,6 +16,7 @@
 //! `frame`/`screen` (aufnehmen), `quality` (Zuschaltbares), `modern`/`models` (moderne Grafik). Darunter die Vulkan-Grundlagen.
 //! Shader: `shaders/`, Schnittstelle in `_common.wgsl` und `descriptors`.
 
+pub(crate) mod cache;
 pub(crate) mod context;
 pub(crate) mod pipeline;
 pub(crate) mod present;
@@ -34,6 +35,7 @@ mod modern;
 mod params;
 mod pipelines;
 mod quality;
+mod runs;
 mod screen;
 #[cfg(test)]
 mod tests;
@@ -55,6 +57,7 @@ use glam::Mat4;
 use lists::DrawLists;
 use pipelines::{Pipelines, SceneSetup};
 use present::{Capture, Frame};
+use runs::{Runs, VisibleRuns};
 use swapchain::Swapchain;
 use timing::GpuTimer;
 use util::{Buffer, Image};
@@ -208,7 +211,11 @@ pub struct Renderer {
     light_buf: Buffer,
     light_count: u32,
     static_buf: Buffer,
-    static_groups: Vec<Group>,
+    static_runs: Runs,
+    box_runs: Runs,
+    visible_runs: VisibleRuns,
+    /// eigener Vertex-Shader der Boxen: Ausdehnung unbekannt, nicht aussortieren
+    cull_boxes: bool,
     /// dieselben Daten fuer die moderne Grafik
     boxes: Vec<crate::gpu::GpuInstance>,
     statics: Vec<MeshDraw>,

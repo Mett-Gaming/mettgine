@@ -227,13 +227,17 @@ impl Renderer {
             self.bind(cmd, pipes.sky, fi, pass, false);
             d.cmd_draw(cmd, 3, 1, 0, 0);
         }
-        if self.box_count > 0 {
+        let boxes = &self.visible_runs.boxes[pass as usize];
+        if !boxes.is_empty() {
             self.bind(cmd, pipes.world, fi, pass, false);
-            d.cmd_draw(cmd, 36, self.box_count, 0, 0);
+            for g in boxes {
+                d.cmd_draw(cmd, 36, g.count, 0, g.first_inst);
+            }
         }
-        if !self.static_groups.is_empty() {
+        let statics = &self.visible_runs.statics[pass as usize];
+        if !statics.is_empty() {
             self.bind(cmd, pipes.mesh, fi, pass, true);
-            self.draw_groups(cmd, &self.static_groups);
+            self.draw_groups(cmd, statics);
         }
         self.bind(cmd, pipes.mesh, fi, pass, false);
         self.draw_groups(cmd, groups);
@@ -295,9 +299,10 @@ impl Renderer {
         if sun.shadow_strength > 0.0 {
             set_viewport(d, cmd, extent);
             let pass = Pass::Shadow;
-            if !self.static_groups.is_empty() {
+            let statics = &self.visible_runs.statics[pass as usize];
+            if !statics.is_empty() {
                 self.bind(cmd, self.pipes.shadow, fi, pass, true);
-                self.draw_groups(cmd, &self.static_groups);
+                self.draw_groups(cmd, statics);
             }
             self.bind(cmd, self.pipes.shadow, fi, pass, false);
             self.draw_groups(cmd, &self.lists.shadow_groups);

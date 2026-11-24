@@ -1,5 +1,6 @@
 //! Grafik-Pipelines bauen (Dynamic Rendering).
 
+use super::cache::Gpu;
 use super::Result;
 use ash::vk;
 use std::ffi::CStr;
@@ -84,7 +85,7 @@ pub(crate) struct PipelineDesc<'a> {
 }
 
 pub(crate) unsafe fn create_pipeline(
-    d: &ash::Device,
+    d: &Gpu,
     layout: vk::PipelineLayout,
     desc: &PipelineDesc,
 ) -> Result<vk::Pipeline> {
@@ -159,7 +160,7 @@ pub(crate) unsafe fn create_pipeline(
         .dynamic_state(&dynamic)
         .layout(layout)
         .push_next(&mut rendering);
-    let result = d.create_graphics_pipelines(vk::PipelineCache::null(), &[info], None);
+    let result = d.create_graphics_pipelines(d.cache, &[info], None);
     d.destroy_shader_module(vs_mod, None);
     d.destroy_shader_module(fs_mod, None); // null ist erlaubt
     let pipelines = result.map_err(|(_, e)| e)?;

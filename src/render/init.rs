@@ -194,7 +194,7 @@ impl Renderer {
         unsafe {
             let d = &ctx.device;
             let desc = Descriptors::new(d)?;
-            let pipes = create_pipelines(d, &desc, swapchain.format, &setup)?;
+            let pipes = create_pipelines(&ctx.gpu(), &desc, swapchain.format, &setup)?;
             let (command_pool, frames) = present::create_frames(&ctx, FRAMES_IN_FLIGHT)?;
             let splash = Splash::new(&ctx, command_pool, swapchain.format, FRAMES_IN_FLIGHT)?;
             let timer = GpuTimer::new(&ctx, FRAMES_IN_FLIGHT)?;
@@ -224,7 +224,10 @@ impl Renderer {
                 static_buf: Buffer::new_host(&ctx, 128, storage)?,
                 box_count: 0,
                 light_count: 0,
-                static_groups: Vec::new(),
+                static_runs: Runs::default(),
+                box_runs: Runs::default(),
+                visible_runs: VisibleRuns::default(),
+                cull_boxes: cfg.world.vert == WorldShaders::default().vert,
                 boxes: Vec::new(),
                 statics: Vec::new(),
                 swapchain,

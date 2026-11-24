@@ -75,7 +75,7 @@ impl Renderer {
         }
         // SAFETY: aufgerufen nach device_wait_idle; alte Pipelines werden genau einmal zerstoert.
         unsafe {
-            let d = &self.ctx.device;
+            let d = &self.ctx.gpu();
             let layout = self.pipes.scene_layout;
             let new = create_scene_pipelines(d, layout, self.wanted_samples, &self.setup)?;
             let old = std::mem::replace(&mut self.pipes.scene, new);

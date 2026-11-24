@@ -1,5 +1,6 @@
 //! Pipelines der modernen Grafik.
 
+use super::super::cache::Gpu;
 use super::super::context::Context;
 use super::super::pipeline::{create_pipeline, Blend, PipelineDesc};
 use super::super::pipelines::{
@@ -145,7 +146,7 @@ pub struct RayPipes {
 }
 
 unsafe fn ray_pipes(
-    d: &ash::Device,
+    d: &Gpu,
     frame: vk::DescriptorSetLayout,
     set: vk::DescriptorSetLayout,
 ) -> Result<RayPipes> {
@@ -184,7 +185,7 @@ unsafe fn pipeline_layout(
     )?)
 }
 
-unsafe fn kind_pipes(d: &ash::Device, layout: vk::PipelineLayout, kind: Kind) -> Result<KindPipes> {
+unsafe fn kind_pipes(d: &Gpu, layout: vk::PipelineLayout, kind: Kind) -> Result<KindPipes> {
     let s = shaders(kind);
     let (bindings, attrs) = vertex_layout(kind);
     let base = || PipelineDesc {
@@ -240,7 +241,7 @@ unsafe fn kind_pipes(d: &ash::Device, layout: vk::PipelineLayout, kind: Kind) ->
     })
 }
 
-unsafe fn post_pipes(d: &ash::Device, layout: vk::PipelineLayout) -> Result<PostPipes> {
+unsafe fn post_pipes(d: &Gpu, layout: vk::PipelineLayout) -> Result<PostPipes> {
     let vs = spv!("p_tonemap.vert");
     let make = |fs: &'static [u8], format, blend| {
         create_pipeline(d, layout, &screen_desc(vs, fs, format, blend, &[], &[]))
@@ -270,7 +271,7 @@ impl Pipes {
         rays: Option<vk::DescriptorSetLayout>,
         swapchain: vk::Format,
     ) -> Result<Self> {
-        let d = &ctx.device;
+        let d = &ctx.gpu();
         // SAFETY: gueltiges Geraet; freigegeben in `destroy`.
         unsafe {
             let layout = pipeline_layout(d, &[frame, material], SCENE_PUSH)?;

@@ -74,6 +74,18 @@ impl Renderer {
     /// Was ist zu sehen? Fuellt `lists`; liefert die erste Figuren-Instanz.
     fn build_lists(&mut self, f: &FrameInput) -> usize {
         let views = Views::new(f, self.second.enabled, self.culling);
+        // Schwanken bewegt feste Objekte hoechstens so weit
+        let grow = match &f.lighting {
+            Lighting::Rooms(r) => r.sway.x.abs() + r.sway.y.abs(),
+            Lighting::Sun(_) => 0.0,
+        };
+        let runs = &mut self.visible_runs;
+        for (k, frustum) in views.frustums().into_iter().enumerate() {
+            let boxes = frustum.filter(|_| self.cull_boxes);
+            self.static_runs
+                .visible(frustum, grow, &mut runs.statics[k]);
+            self.box_runs.visible(boxes, grow, &mut runs.boxes[k]);
+        }
         let (bounds, skin_bounds) = (&self.mesh_bounds, &self.skin_bounds);
         let known = self.mesh_ranges.len();
         let mesh = |m: &MeshDraw| views.sees(Some(bounds[m.mesh].transformed(&m.model)));
@@ -126,7 +138,8 @@ impl Renderer {
         self.stats.dropped = l.dropped + lost as u32;
         // dazu Himmel bzw. Boxen, Nachbearbeitung, feste Modelle, ggf. UI und Partikel
         self.stats.draw_calls = l.draw_calls()
-            + self.static_groups.len() as u32
+            + self.visible_runs.statics[0].len() as u32
+            + (self.visible_runs.boxes[0].len() as u32).saturating_sub(1)
             + 2
             + (ui_count > 0) as u32
             + (particles > 0) as u32;

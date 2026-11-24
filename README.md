@@ -137,6 +137,7 @@ Ob der Szenen-Renderer auf der eigenen Grafikkarte richtig zeichnet, prüft ohne
 ```powershell
 cargo run --release --example gpu_check
 cargo run --release --example gpu_check_modern <ordner>
+cargo run --release --example gpu_bench <ordner>          # dichte Bilder mit Bildzeit
 cargo run --release --example gpu_check_world <ordner>   # Vergleichsbilder vor/nach einem Umbau
 ```
 

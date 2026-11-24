@@ -242,6 +242,14 @@ impl Views {
         }
     }
 
+    /// Sichtfelder von Kamera, zweiter Kamera und Sonne; `None` = nicht aussortieren.
+    pub fn frustums(&self) -> [Option<&Frustum>; 3] {
+        if !self.culling {
+            return [None; 3];
+        }
+        [Some(&self.camera), self.second.as_ref(), self.sun.as_ref()]
+    }
+
     /// `None` = Ausdehnung unbekannt, also sichtbar.
     pub fn sees(&self, s: Option<Sphere>) -> Visible {
         let seen = |f: &Frustum| !self.culling || s.is_none_or(|s| f.sees(&s));

@@ -55,6 +55,11 @@ pub fn data_dir(app: &str) -> Option<PathBuf> {
     Some(base.join(DATA_ROOT).join(app))
 }
 
+/// Datenordner des laufenden Spiels (nach [`init`]).
+pub fn current_dir() -> Option<PathBuf> {
+    state()?.lock().ok()?.dir.clone()
+}
+
 /// Einrichten (einmal beim Start). `app` = Ordnername, `title` = Name fuer Meldungen.
 pub fn init(app: &str, title: &str, version: &str) {
     init_in(data_dir(app), app, title, version, true);
