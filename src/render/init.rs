@@ -97,7 +97,7 @@ fn square(n: u32) -> vk::Extent2D {
 }
 
 /// Bilder einmal in einen lesbaren Zustand bringen (auch wenn ihr Pass nie laeuft).
-unsafe fn make_readable(
+pub(super) unsafe fn make_readable(
     ctx: &Context,
     pool: vk::CommandPool,
     images: &[(&Image, vk::ImageAspectFlags)],
@@ -240,7 +240,9 @@ impl Renderer {
             let font = r8_texture(&ctx, command_pool, cfg.font, FONT_MIPS)?;
             let signs = r8_texture(&ctx, command_pool, cfg.signs.unwrap_or((&[0], 1, 1)), 1)?;
             let (color_bit, depth_bit) = (vk::ImageAspectFlags::COLOR, vk::ImageAspectFlags::DEPTH);
+            let lamp = lamp_pass::LampPass::new(&ctx, desc.scene_layout, scene_format)?;
             let readable = [
+                (&lamp.atlas, depth_bit),
                 (&shadow, depth_bit),
                 (&dummy_shadow, depth_bit),
                 (&second.color, color_bit),
@@ -263,6 +265,13 @@ impl Renderer {
                 static_buf: Buffer::new_host(&ctx, 128, storage)?,
                 box_count: 0,
                 light_count: 0,
+                lights: Vec::new(),
+                lamp,
+                lamp_bufs: per_frame(
+                    &ctx,
+                    lamps::MAX_LAMPS * size_of::<lamps::GpuLampTile>(),
+                    storage,
+                )?,
                 static_runs: Runs::default(),
                 box_runs: Runs::default(),
                 visible_runs: VisibleRuns::default(),
@@ -343,7 +352,7 @@ impl Renderer {
     ) -> Result<(Image, Image, Option<Image>)> {
         let color = color_target(ctx, ext, format)?;
         if samples == vk::SampleCountFlags::TYPE_1 {
-            return Ok((color, depth_target(ctx, ext, false)?, None));
+            return Ok((color, depth_target(ctx, ext, true)?, None));
         }
         let make = |format, usage, aspect| {
             Image::with(

@@ -53,12 +53,16 @@ impl Renderer {
         }
         self.apply_samples()?;
         self.write_tex_descriptors();
+        // die Tiefe der Szene steht auch in den Szenen-Sets
+        for fi in 0..FRAMES_IN_FLIGHT {
+            self.write_scene_descriptors(fi);
+        }
         self.needs_recreate = false;
         Ok(())
     }
 
     /// Uniform fuer eine Kamera; `second` = zweite Kamera.
-    fn globals(&self, f: &FrameInput, view: &View, second: bool) -> Globals {
+    fn globals(&self, f: &FrameInput, view: &View, second: bool, lamps: usize) -> Globals {
         let v4 = |v: Vec3, w: f32| v.extend(w).to_array();
         let rooms = matches!(f.lighting, Lighting::Rooms(_));
         let mut g = Globals {
@@ -87,7 +91,7 @@ impl Renderer {
                 g.horizon = v4(r.fog_color, r.fog_density);
                 g.params[1] = r.dark as u8 as f32;
                 g.sway = r.sway.to_array();
-                g.extra[0] = r.decay;
+                g.extra = [r.decay, lamps as f32, self.lamp.cfg.contact, 0.0];
             }
         }
         g
@@ -95,7 +99,8 @@ impl Renderer {
 
     /// Was ist zu sehen? Fuellt `lists`; liefert die erste Figuren-Instanz.
     fn build_lists(&mut self, f: &FrameInput) -> usize {
-        let views = Views::new(f, self.second.enabled, self.culling);
+        let lamps = self.lamp_spheres(f);
+        let views = Views::new(f, self.second.enabled, self.culling, lamps);
         // Schwanken bewegt feste Objekte hoechstens so weit
         let grow = match &f.lighting {
             Lighting::Rooms(r) => r.sway.x.abs() + r.sway.y.abs(),
@@ -124,6 +129,7 @@ impl Renderer {
 
     /// Listen aufbauen und alle Puffer des Bildes `fi` fuellen (die GPU ist mit ihnen fertig).
     fn fill_frame(&mut self, fi: usize, f: &FrameInput) -> Result<Counts> {
+        let lamps = self.prepare_lamps(fi, f);
         let skin_base = self.build_lists(f);
         let l = &self.lists;
         self.scratch_insts.clear();
@@ -147,10 +153,10 @@ impl Renderer {
 
         self.inst_bufs[fi].write(bytemuck::cast_slice(&self.scratch_insts));
         self.bone_bufs[fi].write(bytemuck::cast_slice(&self.scratch_bones));
-        let main = self.globals(f, &f.view, false);
+        let main = self.globals(f, &f.view, false, lamps);
         self.globals_bufs[fi].write(bytemuck::bytes_of(&main));
         if let Some(view) = &f.second_camera {
-            let second = self.globals(f, view, true);
+            let second = self.globals(f, view, true, lamps);
             self.second_globals[fi].write(bytemuck::bytes_of(&second));
         }
         self.ui_bufs[fi].write(bytemuck::cast_slice(&f.ui[..ui_count]));

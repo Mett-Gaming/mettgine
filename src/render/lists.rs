@@ -222,10 +222,12 @@ pub(super) struct Views {
     sun: Option<Frustum>,
     /// None = keine zweite Kamera
     second: Option<Frustum>,
+    /// Reichweite der Lampen, die Schatten werfen
+    lamps: Vec<Sphere>,
 }
 
 impl Views {
-    pub fn new(f: &FrameInput, second_camera: bool, culling: bool) -> Self {
+    pub fn new(f: &FrameInput, second_camera: bool, culling: bool, lamps: Vec<Sphere>) -> Self {
         let sun =
             match &f.lighting {
                 Lighting::Sun(s) if s.shadow_strength > 0.0 => Some(Frustum::new(
@@ -239,6 +241,7 @@ impl Views {
             camera: Frustum::new(&f.view.view_proj),
             sun,
             second: second.map(|v| Frustum::new(&v.view_proj)),
+            lamps,
         }
     }
 
@@ -253,9 +256,10 @@ impl Views {
     /// `None` = Ausdehnung unbekannt, also sichtbar.
     pub fn sees(&self, s: Option<Sphere>) -> Visible {
         let seen = |f: &Frustum| !self.culling || s.is_none_or(|s| f.sees(&s));
+        let near = |l: &Sphere| s.is_none_or(|s| l.center.distance(s.center) < l.radius + s.radius);
         Visible {
             camera: seen(&self.camera),
-            shadow: self.sun.as_ref().is_some_and(seen),
+            shadow: self.sun.as_ref().is_some_and(seen) || self.lamps.iter().any(near),
             second: self.second.as_ref().is_some_and(seen),
         }
     }
