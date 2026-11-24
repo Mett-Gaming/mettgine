@@ -285,11 +285,14 @@ impl Rt {
             return Ok(());
         }
         accel::after_copy(ctx, cmd);
+        let mut later = Vec::new();
         for id in std::mem::take(&mut self.pending) {
             let Some(b) = self.blas.get(&id) else {
                 continue;
             };
-            let Some(m) = store.model(super::ModelId(id)) else {
+            let Some(m) = store.ready_model(super::ModelId(id)) else {
+                // noch nicht hochgeladen
+                later.push(id);
                 continue;
             };
             let (vertices, indices) = (m.vertices.buffer, m.indices.buffer);
@@ -298,6 +301,7 @@ impl Rt {
                 .build_triangles(ctx, cmd, &mut store.arena, vertices, indices)?;
             self.trash.push((self.frame, Trash::Buffer(scratch)));
         }
+        self.pending = later;
         accel::after_build(ctx, cmd);
         Ok(())
     }
@@ -326,6 +330,7 @@ impl Rt {
                 Kind::Object => self
                     .blas
                     .get(&it.model)
+                    .filter(|_| !self.pending.contains(&it.model))
                     .map(|b| (b.accel.address, b.first_tri, 0)),
                 _ => {
                     let f = self.figures.found.get(&it.obj);

@@ -59,6 +59,10 @@ FSR, XeSS, DLSS und Ray Reconstruction: siehe [hochskalieren.md](hochskalieren.m
 
 Nicht eingebaut, weil es sie (Stand November 2026) nur für DirectX 12 gibt: FSR Ray Regeneration, XeSS Frame Generation, XeLL.
 
+## Laden ohne Stocken
+
+`Renderer::prepare_modern()` legt beim Laden alle Pipelines der modernen Grafik an (sonst beim ersten Bild). `set_upload_budget(8)` lädt höchstens 8 MB je Bild hoch; was noch fehlt, wird nicht gezeichnet, `loading()` sagt, ob noch etwas unterwegs ist. Übersetzte Shader bleiben von Start zu Start erhalten. Nicht eingebaut: einzelne Verkleinerungsstufen je nach Bildgröße und Speicher nachladen.
+
 ## Viel Geometrie
 
 `Config::gpu_culling` und `Features::gpu_culling` sortieren Verdecktes auf der Grafikkarte aus: eine Tiefenpyramide und indirekte Zeichenbefehle in zwei Durchgängen, sodass nie etwas fehlt, das gerade erst sichtbar wird. Schatten und Halbtransparentes sind nicht dabei. Testfall mit 4000 feinen Kugeln hinter einer Wand: 9,8 → 0,27 ms (RTX 5090), Bild gleich. Genau aufeinanderliegende Flächen können flimmern, weil sich ihre Reihenfolge ändert.

@@ -288,6 +288,7 @@ impl Modern {
         let same_camera = self.prev_view_proj == Some(s.camera.view_proj());
         let old = self.prev_view_proj.filter(|_| !s.cut);
         let old = old.unwrap_or_else(|| s.camera.view_proj());
+        self.store.choose_copies();
         self.prepare(i, f, s, wants)?;
         self.store.begin_frame(i.ctx, i.cmd);
         self.record_shadows(i);
@@ -331,6 +332,7 @@ impl Modern {
     /// # Safety
     /// `cmd` muss aufgenommen werden, ausserhalb eines Durchgangs.
     pub unsafe fn upload_only(&mut self, ctx: &Context, cmd: vk::CommandBuffer) {
+        self.store.choose_copies();
         self.store.begin_frame(ctx, cmd);
         // die naechste moderne Szene beginnt ohne Verlauf
         self.motion.forget();

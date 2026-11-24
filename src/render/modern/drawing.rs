@@ -109,7 +109,7 @@ impl Modern {
             Kind::Mesh => (i.mesh_vertices, i.mesh_ranges),
             Kind::Skin => (i.skin_vertices, i.skin_ranges),
             Kind::Object | Kind::Skinned => {
-                let Some(m) = self.store.model(super::ModelId(b.model)) else {
+                let Some(m) = self.store.ready_model(super::ModelId(b.model)) else {
                     return;
                 };
                 if bind {

@@ -143,11 +143,14 @@ impl Lists {
 
     fn add_objects(&mut self, s: &SceneInput, store: &Store, motion: &mut Motion) {
         for (n, o) in s.objects.iter().enumerate() {
-            let (Some(model), Some(mat)) = (store.model(o.model), store.material(o.material))
+            let (Some(model), Some(mat)) = (store.ready_model(o.model), store.material(o.material))
             else {
                 continue;
             };
             let m = &mat.data;
+            if store.is_waiting(m) {
+                continue;
+            }
             let skinned = model.joints.is_some();
             let key = Key {
                 kind: if skinned { Kind::Skinned } else { Kind::Object },

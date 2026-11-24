@@ -495,12 +495,63 @@ fn run(window: &Window, dir: &Path) -> std::result::Result<(), String> {
             c.name, s.cpu_ms, s.gpu_ms, s.draw_calls
         );
     }
+    check_budget(&mut r, &world).map_err(e)?;
     check_culling(&mut r, &world, dir)?;
     // Entfernen waehrend des Betriebs darf nichts kaputt machen
     r.remove_model(world.objects[0].model);
     r.remove_material(world.objects[1].material);
     for f in 0..5 {
         shot(&mut r, &world, &all[7], f, None).map_err(e)?;
+    }
+    Ok(())
+}
+
+/// Begrenztes Hochladen: kommt nach und nach an, Entfernen unterwegs stoert nicht.
+fn check_budget(r: &mut Renderer, world: &World) -> Result<()> {
+    r.set_upload_budget(1)?;
+    let mut models = Vec::new();
+    for _ in 0..40 {
+        models.push(r.add_model(&ModelData::from_mesh(&shapes::sphere(64)))?);
+    }
+    let big = TextureData {
+        width: 1024,
+        height: 1024,
+        rgba: vec![200; 1024 * 1024 * 4],
+        srgb: true,
+        mips: true,
+    };
+    let tex = r.add_texture(&big)?;
+    r.remove_model(models[20]);
+    r.remove_texture(tex)?;
+    let objects = models.iter().map(|m| ObjectDraw {
+        model: *m,
+        ..world.objects[1]
+    });
+    let crowd = World {
+        objects: objects.collect(),
+        lights: Vec::new(),
+        logo: world.logo,
+        decals: Vec::new(),
+        meshes: Vec::new(),
+    };
+    let all = cases();
+    let rays = all.iter().find(|c| c.name == "strahlen_alles");
+    let case = rays.filter(|_| r.ray_tracing()).unwrap_or(&all[0]);
+    let mut frames = 0;
+    while r.loading() {
+        shot(r, &crowd, case, frames, None)?;
+        frames += 1;
+        if frames > 500 {
+            return Err("Hochladen wird nie fertig".into());
+        }
+    }
+    println!("Hochladen mit Grenze: {frames} Bilder");
+    for k in 0..5 {
+        shot(r, &crowd, case, k, None)?;
+    }
+    r.set_upload_budget(0)?;
+    if frames < 5 {
+        return Err("Grenze beim Hochladen wirkt nicht".into());
     }
     Ok(())
 }

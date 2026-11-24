@@ -23,6 +23,30 @@ impl Renderer {
         result
     }
 
+    /// Moderne Grafik schon beim Laden anlegen (Shader uebersetzen), damit das erste Bild damit nicht
+    /// stockt. Sonst geschieht das beim ersten Gebrauch.
+    pub fn prepare_modern(&mut self) -> Result<()> {
+        self.with_store(|_, _| Ok(()))
+    }
+
+    /// Hoechstens so viele Megabyte je Bild hochladen (0 = alles sofort, Vorgabe). Was noch fehlt,
+    /// wird nicht gezeichnet; siehe [`Renderer::loading`].
+    pub fn set_upload_budget(&mut self, megabytes: u32) -> Result<()> {
+        let bytes = match megabytes {
+            0 => u64::MAX,
+            n => (n as u64) << 20,
+        };
+        self.with_store(|m, _| {
+            m.store.budget = bytes;
+            Ok(())
+        })
+    }
+
+    /// Warten noch Modelle oder Texturen aufs Hochladen?
+    pub fn loading(&self) -> bool {
+        self.modern.as_ref().is_some_and(|m| m.store.loading())
+    }
+
     /// Modell laden. Es ist ab dem naechsten Bild zu sehen.
     pub fn add_model(&mut self, m: &ModelData) -> Result<ModelId> {
         self.with_store(|s, ctx| s.add_model(ctx, m))

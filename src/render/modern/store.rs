@@ -11,6 +11,7 @@ use super::model::*;
 use super::sets::MaterialSets;
 use crate::cull::Sphere;
 use ash::vk;
+use ash::vk::Handle;
 use bytemuck::{Pod, Zeroable};
 
 /// Ein Modell im Grafikspeicher.
@@ -20,6 +21,8 @@ pub struct Model {
     pub joints: Option<GpuBuffer>,
     pub index_count: u32,
     pub bounds: Sphere,
+    /// schon im Grafikspeicher
+    ready: bool,
 }
 
 /// Werte eines Materials, gleich aufgebaut wie `Mat` in `_m_common.wgsl`.
@@ -55,17 +58,33 @@ enum Trash {
 /// Ein noch ausstehender Kopiervorgang.
 enum Copy {
     Buffer {
-        src: vk::Buffer,
+        src: Buffer,
         dst: vk::Buffer,
         size: u64,
     },
     Image {
-        src: vk::Buffer,
+        src: Buffer,
         dst: vk::Image,
         width: u32,
         height: u32,
         mips: u32,
     },
+}
+
+impl Copy {
+    fn source(self) -> Buffer {
+        match self {
+            Copy::Buffer { src, .. } | Copy::Image { src, .. } => src,
+        }
+    }
+
+    /// Handle des Ziels.
+    fn target(&self) -> u64 {
+        match self {
+            Copy::Buffer { dst, .. } => dst.as_raw(),
+            Copy::Image { dst, .. } => dst.as_raw(),
+        }
+    }
 }
 
 /// Alles Nachladbare.
@@ -77,7 +96,13 @@ pub struct Store {
     /// wird bei jeder Aenderung an Materialien groesser
     pub version: u64,
     pub sets: MaterialSets,
-    pending: Vec<Copy>,
+    pending: std::collections::VecDeque<Copy>,
+    /// so viele Bytes je Bild hochladen (mindestens ein Auftrag)
+    pub budget: u64,
+    /// Auftraege dieses Bildes
+    chosen: Vec<Copy>,
+    /// Texturen, deren Inhalt noch nicht da ist
+    waiting: Vec<TextureId>,
     trash: Vec<(u64, Trash)>,
     frame: u64,
     /// weisses Bild und flache Normale fuer fehlende Texturen
@@ -112,7 +137,10 @@ impl Store {
             materials: Vec::new(),
             version: 1,
             sets: MaterialSets::new(ctx)?,
-            pending: Vec::new(),
+            pending: Default::default(),
+            budget: u64::MAX,
+            chosen: Vec::new(),
+            waiting: Vec::new(),
             trash: Vec::new(),
             frame: 0,
             white: TextureId(0),
@@ -127,6 +155,7 @@ impl Store {
         };
         s.white = s.add_texture(ctx, &pixel([255; 4]))?;
         s.flat = s.add_texture(ctx, &pixel([128, 128, 255, 255]))?;
+        s.waiting.clear(); // die Platzhalter kommen als Erste
         Ok(s)
     }
 
@@ -134,14 +163,12 @@ impl Store {
         self.trash.push((self.frame, t));
     }
 
-    /// Daten in einen Zwischenpuffer legen, der nach der Kopie verfaellt.
-    fn stage(&mut self, ctx: &Context, bytes: &[u8]) -> Result<vk::Buffer> {
+    /// Daten in einen Zwischenpuffer legen.
+    fn stage(&mut self, ctx: &Context, bytes: &[u8]) -> Result<Buffer> {
         let usage = vk::BufferUsageFlags::TRANSFER_SRC;
         let b = Buffer::new_host(ctx, bytes.len().max(16) as u64, usage)?;
         b.write(bytes);
-        let handle = b.buffer;
-        self.throw(Trash::Staging(b));
-        Ok(handle)
+        Ok(b)
     }
 
     fn upload_buffer(
@@ -152,7 +179,7 @@ impl Store {
     ) -> Result<GpuBuffer> {
         let dst = self.arena.buffer(ctx, bytes.len() as u64, usage)?;
         let src = self.stage(ctx, bytes)?;
-        self.pending.push(Copy::Buffer {
+        self.pending.push_back(Copy::Buffer {
             src,
             dst: dst.buffer,
             size: bytes.len() as u64,
@@ -190,6 +217,7 @@ impl Store {
             },
             index_count: m.indices.len() as u32 / 3 * 3,
             bounds: Sphere { center, radius },
+            ready: false,
         };
         Ok(ModelId(put(&mut self.models, model)))
     }
@@ -215,14 +243,16 @@ impl Store {
         };
         let image = self.arena.image(ctx, &desc)?;
         let src = self.stage(ctx, &t.rgba)?;
-        self.pending.push(Copy::Image {
+        self.pending.push_back(Copy::Image {
             src,
             dst: image.image,
             width: w,
             height: h,
             mips,
         });
-        Ok(TextureId(put(&mut self.textures, image)))
+        let id = TextureId(put(&mut self.textures, image));
+        self.waiting.push(id);
+        Ok(id)
     }
 
     pub fn add_material(&mut self, ctx: &Context, m: &Material) -> Result<MaterialId> {
@@ -319,6 +349,11 @@ impl Store {
         self.models.get(id.0 as usize)?.as_ref()
     }
 
+    /// Wie [`Store::model`], aber nur, wenn es schon gezeichnet werden kann.
+    pub fn ready_model(&self, id: ModelId) -> Option<&Model> {
+        self.model(id).filter(|m| m.ready)
+    }
+
     pub fn texture(&self, id: TextureId) -> Option<&GpuImage> {
         self.textures.get(id.0 as usize)?.as_ref()
     }
@@ -327,12 +362,25 @@ impl Store {
         self.materials.get(id.0 as usize)?.as_ref()
     }
 
+    /// Ausstehende Auftraege fuer ein Ziel vergessen (es wird freigegeben).
+    fn cancel(&mut self, target: u64) {
+        let all = std::mem::take(&mut self.pending);
+        for c in all {
+            if c.target() == target {
+                self.throw(Trash::Staging(c.source()));
+            } else {
+                self.pending.push_back(c);
+            }
+        }
+    }
+
     pub fn remove_model(&mut self, id: ModelId) {
         if let Some(m) = self.models.get_mut(id.0 as usize).and_then(Option::take) {
             for b in [Some(m.vertices), Some(m.indices), m.joints]
                 .into_iter()
                 .flatten()
             {
+                self.cancel(b.buffer.as_raw());
                 self.throw(Trash::Buffer(b));
             }
         }
@@ -354,6 +402,7 @@ impl Store {
         let Some(image) = slot.and_then(Option::take) else {
             return Ok(());
         };
+        self.cancel(image.image.as_raw());
         self.throw(Trash::Image(image));
         let users: Vec<(u32, Material)> = self
             .materials
@@ -393,15 +442,15 @@ impl Store {
         for (_, t) in old {
             self.release(ctx, t);
         }
-        let copies = std::mem::take(&mut self.pending);
+        let copies = std::mem::take(&mut self.chosen);
         if copies.is_empty() {
             return;
         }
         for c in &copies {
-            match *c {
+            match c {
                 Copy::Buffer { src, dst, size } => {
-                    let region = vk::BufferCopy::default().size(size);
-                    ctx.device.cmd_copy_buffer(cmd, src, dst, &[region]);
+                    let region = vk::BufferCopy::default().size(*size);
+                    ctx.device.cmd_copy_buffer(cmd, src.buffer, *dst, &[region]);
                 }
                 Copy::Image {
                     src,
@@ -409,8 +458,11 @@ impl Store {
                     width,
                     height,
                     mips,
-                } => copy_image(&ctx.device, cmd, src, dst, (width, height, mips)),
+                } => copy_image(&ctx.device, cmd, src.buffer, *dst, (*width, *height, *mips)),
             }
+        }
+        for c in copies {
+            self.throw(Trash::Staging(c.source()));
         }
         let read = vk::MemoryBarrier::default()
             .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
@@ -424,6 +476,50 @@ impl Store {
             &[],
             &[],
         );
+    }
+
+    /// Auftraege dieses Bildes waehlen (vor dem Sammeln der Objekte); was damit vollstaendig ist,
+    /// gilt als da.
+    pub fn choose_copies(&mut self) {
+        let mut left = self.budget;
+        let mut list = Vec::new();
+        while let Some(c) = self.pending.front() {
+            let size = match c {
+                Copy::Buffer { size, .. } => *size,
+                Copy::Image { width, height, .. } => *width as u64 * *height as u64 * 4,
+            };
+            if !list.is_empty() && size > left {
+                break;
+            }
+            left = left.saturating_sub(size);
+            list.extend(self.pending.pop_front());
+        }
+        if list.is_empty() {
+            return;
+        }
+        let open: std::collections::HashSet<u64> = self.pending.iter().map(Copy::target).collect();
+        for m in self.models.iter_mut().flatten().filter(|m| !m.ready) {
+            let parts = [Some(m.vertices), Some(m.indices), m.joints];
+            let mut parts = parts.into_iter().flatten();
+            m.ready = parts.all(|b| !open.contains(&b.buffer.as_raw()));
+        }
+        let textures = &self.textures;
+        self.waiting.retain(|id| {
+            let t = textures.get(id.0 as usize).and_then(Option::as_ref);
+            t.is_some_and(|i| open.contains(&i.image.as_raw()))
+        });
+        self.chosen.append(&mut list);
+    }
+
+    /// Wartet noch etwas darauf, hochgeladen zu werden?
+    pub fn loading(&self) -> bool {
+        !self.pending.is_empty()
+    }
+
+    /// Ist der Inhalt einer Textur noch unterwegs?
+    pub fn is_waiting(&self, m: &Material) -> bool {
+        let used = textures_of(m);
+        self.waiting.iter().any(|w| used.contains(&Some(*w)))
     }
 
     unsafe fn release(&mut self, ctx: &Context, t: Trash) {
@@ -441,6 +537,11 @@ impl Store {
     pub unsafe fn destroy(&mut self, ctx: &Context) {
         for i in 0..self.models.len() {
             self.remove_model(ModelId(i as u32));
+        }
+        let rest = std::mem::take(&mut self.pending);
+        let chosen = std::mem::take(&mut self.chosen);
+        for c in rest.into_iter().chain(chosen) {
+            self.throw(Trash::Staging(c.source()));
         }
         for t in std::mem::take(&mut self.textures).into_iter().flatten() {
             self.throw(Trash::Image(t));
