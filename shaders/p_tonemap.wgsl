@@ -40,7 +40,7 @@ fn to_display(c: vec3<f32>) -> vec3<f32> {
 
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
-    var c = textureLoad(tex0, vec2<i32>(in.pos.xy), 0).rgb * textureLoad(tex2, vec2<i32>(0), 0).r;
+    var c = textureSampleLevel(tex0, linear_samp, in.uv, 0.0).rgb * textureLoad(tex2, vec2<i32>(0), 0).r;
     if (pc.a.y > 0.0) {
         c = mix(c, c + textureSampleLevel(tex1, linear_samp, in.uv, 0.0).rgb, pc.a.y);
     }

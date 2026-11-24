@@ -7,6 +7,10 @@ use ash::vk;
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec2, Vec3, Vec4};
 
+/// Texturen beim Hochskalieren schaerfer waehlen (Stufen je Halbierung der Aufloesung)
+const MIP_BIAS: f32 = 1.3;
+/// Streuung der Sonnenstrahlen (weiche Schattenraender)
+const SUN_RADIUS: f32 = 0.012;
 /// Felder im Schatten-Atlas der Lampen
 pub const TILES: usize = 64;
 
@@ -52,6 +56,10 @@ pub struct GpuScene {
     pub misc: [f32; 4],
     pub cluster: [f32; 4],
     pub screen: [f32; 4],
+    /// Strahlen: Sonne, Streulicht, Spiegelung, Bildnummer
+    pub rt: [f32; 4],
+    /// Lampen, Sonnenradius, Reichweite und Staerke der Verdeckung
+    pub counts: [f32; 4],
     pub tiles: [GpuTile; TILES],
 }
 
@@ -96,7 +104,7 @@ pub fn jitter(n: u64) -> Vec2 {
         }
         r
     };
-    let i = n % 8 + 1;
+    let i = n % 32 + 1;
     Vec2::new(halton(i, 2) - 0.5, halton(i, 3) - 0.5)
 }
 
@@ -112,6 +120,10 @@ pub struct SceneExtras<'a> {
     pub atlas: u32,
     pub sky_mips: u32,
     pub time: f32,
+    /// Bildnummer
+    pub number: u64,
+    /// Lampen
+    pub lamps: usize,
 }
 
 /// Kamera mit TAA-Versatz.
@@ -137,7 +149,7 @@ impl GpuScene {
             inv_view_proj: view_proj.inverse().to_cols_array_2d(),
             cam_pos: cam.pos.extend(x.time).to_array(),
             cam_dir: (-cam.view.inverse().z_axis.truncate())
-                .extend(0.0)
+                .extend((s.features.render_scale.clamp(0.33, 1.0)).log2() * MIP_BIAS)
                 .to_array(),
             cluster: [scale, offset, GRID[0] as f32 / w, GRID[1] as f32 / h],
             screen: [w, h, 1.0 / w, 1.0 / h],
@@ -172,7 +184,17 @@ impl GpuScene {
             g.fog = f.color.extend(f.density).to_array();
             g.misc[0] = f.falloff;
         }
-        g.misc[1] = s.features.ssao.is_some() as u8 as f32;
+        let ray = &s.features.ray_tracing;
+        let on = |b: bool| b as u8 as f32;
+        g.rt = [
+            on(ray.sun_shadows),
+            on(ray.indirect),
+            on(ray.reflections),
+            (x.number % 4096) as f32,
+        ];
+        let ssao = s.features.ssao.unwrap_or_default();
+        g.counts = [x.lamps as f32, SUN_RADIUS, ssao.radius, ssao.strength];
+        g.misc[1] = on(s.features.ssao.is_some() || ray.occlusion);
         g.misc[2] = 1.0 / s.features.sun_shadow_size.max(1) as f32;
         g.misc[3] = 1.0 / x.atlas.max(1) as f32;
         for (t, new) in g.tiles.iter_mut().zip(x.tiles) {
@@ -188,9 +210,9 @@ mod tests {
 
     #[test]
     fn jitter_stays_inside_a_pixel_and_averages_out() {
-        let sum: Vec2 = (0..8).map(jitter).sum();
-        assert!((0..20).all(|n| jitter(n).abs().max_element() <= 0.5));
-        assert!((sum / 8.0).length() < 0.1);
+        let sum: Vec2 = (0..32).map(jitter).sum();
+        assert!((0..40).all(|n| jitter(n).abs().max_element() <= 0.5));
+        assert!((sum / 32.0).length() < 0.1);
     }
 
     #[test]

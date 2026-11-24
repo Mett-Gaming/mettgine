@@ -71,12 +71,15 @@ impl Buffer {
                 vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
             )
             .ok_or("Kein host-sichtbarer Speicher")?;
-            let memory = d.allocate_memory(
-                &vk::MemoryAllocateInfo::default()
-                    .allocation_size(req.size)
-                    .memory_type_index(ty),
-                None,
-            )?;
+            let mut flags = vk::MemoryAllocateFlagsInfo::default()
+                .flags(vk::MemoryAllocateFlags::DEVICE_ADDRESS);
+            let mut info = vk::MemoryAllocateInfo::default()
+                .allocation_size(req.size)
+                .memory_type_index(ty);
+            if usage.contains(vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS) {
+                info = info.push_next(&mut flags);
+            }
+            let memory = d.allocate_memory(&info, None)?;
             d.bind_buffer_memory(buffer, memory, 0)?;
             let mapped =
                 d.map_memory(memory, 0, vk::WHOLE_SIZE, vk::MemoryMapFlags::empty())? as *mut u8;

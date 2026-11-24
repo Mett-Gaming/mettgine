@@ -116,6 +116,10 @@ pub struct PostPipes {
     pub exposure: vk::Pipeline,
     pub tonemap: vk::Pipeline,
     pub fxaa: vk::Pipeline,
+    pub accum: vk::Pipeline,
+    pub atrous: vk::Pipeline,
+    pub compose: vk::Pipeline,
+    pub sharpen: vk::Pipeline,
 }
 
 /// Alle Pipelines und Layouts.
@@ -128,6 +132,37 @@ pub struct Pipes {
     pub post: PostPipes,
     /// Bilder der Oberflaeche
     pub image: vk::Pipeline,
+    pub rays: Option<RayPipes>,
+}
+
+/// Strahlen.
+pub struct RayPipes {
+    pub layout: vk::PipelineLayout,
+    pub vis: vk::Pipeline,
+    pub gi: vk::Pipeline,
+    pub path: vk::Pipeline,
+}
+
+unsafe fn ray_pipes(
+    d: &ash::Device,
+    frame: vk::DescriptorSetLayout,
+    set: vk::DescriptorSetLayout,
+) -> Result<RayPipes> {
+    let layout = pipeline_layout(d, &[frame, set], POST_PUSH)?;
+    let vs = spv!("rt_vis.vert");
+    let make = |fs: &'static [u8], format, more: &'static [vk::Format]| {
+        let desc = PipelineDesc {
+            more_colors: more,
+            ..screen_desc(vs, fs, format, Blend::Opaque, &[], &[])
+        };
+        create_pipeline(d, layout, &desc)
+    };
+    Ok(RayPipes {
+        vis: make(spv!("rt_vis.frag"), AO, &[])?,
+        gi: make(spv!("rt_gi.frag"), HDR, &[HDR])?,
+        path: make(spv!("rt_path.frag"), HDR, &[HDR])?,
+        layout,
+    })
 }
 
 unsafe fn pipeline_layout(
@@ -218,6 +253,10 @@ unsafe fn post_pipes(d: &ash::Device, layout: vk::PipelineLayout) -> Result<Post
         exposure: make(spv!("p_exposure.frag"), EXPOSURE, Blend::Opaque)?,
         tonemap: make(spv!("p_tonemap.frag"), LDR, Blend::Opaque)?,
         fxaa: make(spv!("p_fxaa.frag"), LDR, Blend::Opaque)?,
+        accum: make(spv!("p_accum.frag"), HDR, Blend::Opaque)?,
+        atrous: make(spv!("p_atrous.frag"), HDR, Blend::Opaque)?,
+        compose: make(spv!("p_compose.frag"), HDR, Blend::Opaque)?,
+        sharpen: make(spv!("p_sharpen.frag"), LDR, Blend::Opaque)?,
     })
 }
 
@@ -227,6 +266,7 @@ impl Pipes {
         frame: vk::DescriptorSetLayout,
         material: vk::DescriptorSetLayout,
         post: vk::DescriptorSetLayout,
+        rays: Option<vk::DescriptorSetLayout>,
         swapchain: vk::Format,
     ) -> Result<Self> {
         let d = &ctx.device;
@@ -258,6 +298,10 @@ impl Pipes {
                 )
             };
             Ok(Self {
+                rays: match rays {
+                    Some(set) => Some(ray_pipes(d, frame, set)?),
+                    None => None,
+                },
                 layout,
                 post_layout,
                 kinds: [k(KINDS[0])?, k(KINDS[1])?, k(KINDS[2])?, k(KINDS[3])?],
@@ -302,12 +346,22 @@ impl Pipes {
             p.exposure,
             p.tonemap,
             p.fxaa,
+            p.accum,
+            p.atrous,
+            p.compose,
+            p.sharpen,
             self.sky,
             self.particle,
         ] {
             d.destroy_pipeline(p, None);
         }
         d.destroy_pipeline(self.image, None);
+        if let Some(r) = &self.rays {
+            for p in [r.vis, r.gi, r.path] {
+                d.destroy_pipeline(p, None);
+            }
+            d.destroy_pipeline_layout(r.layout, None);
+        }
         d.destroy_pipeline_layout(self.layout, None);
         d.destroy_pipeline_layout(self.post_layout, None);
     }

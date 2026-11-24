@@ -24,7 +24,7 @@ impl Renderer {
 
     /// Modell laden. Es ist ab dem naechsten Bild zu sehen.
     pub fn add_model(&mut self, m: &ModelData) -> Result<ModelId> {
-        self.with_store(|s, ctx| s.store.add_model(ctx, m))
+        self.with_store(|s, ctx| s.add_model(ctx, m))
     }
 
     /// Textur laden.
@@ -48,7 +48,7 @@ impl Renderer {
     /// Modell entfernen; der Speicher wird frei, sobald kein Bild im Flug es benutzt.
     pub fn remove_model(&mut self, id: ModelId) {
         if let Some(m) = &mut self.modern {
-            m.store.remove_model(id);
+            m.remove_model(id);
         }
     }
 

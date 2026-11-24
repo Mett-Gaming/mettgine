@@ -341,11 +341,13 @@ impl Modern {
         );
         set_viewport(d, cmd, i.extent);
         self.bind_frame(i, 1);
+        self.mark_blended(i, false);
         self.draw(i, Stage::Opaque, self.batches(&self.views.camera));
         d.cmd_bind_pipeline(cmd, GFX, self.pipes.sky);
         self.bind_any_material(i);
         d.cmd_draw(cmd, 3, 1, 0, 0);
         self.bind_frame(i, 2);
+        self.mark_blended(i, true);
         self.draw(i, Stage::Blend, self.batches(&self.views.blend));
         let (particles, count) = i.particles;
         if count > 0 {
@@ -367,6 +369,18 @@ impl Modern {
         }
         d.cmd_end_rendering(cmd);
         barrier(d, cmd, (out, frag), &[color_read(t.hdr.image)]);
+    }
+
+    /// Sagt den Shadern, ob Werte aus Bildschirm-Durchgaengen gelten.
+    unsafe fn mark_blended(&self, i: &Inputs, blended: bool) {
+        let mut push = [0.0f32; 16];
+        push[0] = blended as u8 as f32;
+        let stages = vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT;
+        let bytes = bytemuck::cast_slice(&push);
+        let layout = self.pipes.layout;
+        i.ctx
+            .device
+            .cmd_push_constants(i.cmd, layout, stages, 0, bytes);
     }
 
     /// Himmel und Partikel lesen kein Material, das Set muss trotzdem gebunden sein.

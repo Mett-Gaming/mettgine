@@ -1,35 +1,6 @@
 // Moderne Grafik: Beleuchtung (Metall-Rauheit, GGX), Schatten, Himmel, Nebel.
 
-const PI: f32 = 3.14159265;
-
-// Drehung der Abtastung je Bildpunkt, damit weiche Schatten rauschen statt Stufen zu zeigen
-fn noise(p: vec2<f32>) -> f32 {
-    return fract(52.9829189 * fract(dot(p, vec2<f32>(0.06711056, 0.00583715))));
-}
-
-fn equirect(dir: vec3<f32>) -> vec2<f32> {
-    return vec2<f32>(atan2(dir.x, -dir.z) / (2.0 * PI) + 0.5, acos(clamp(dir.y, -1.0, 1.0)) / PI);
-}
-
-// Himmel in Richtung `dir`; `rough` 0 = scharf, 1 = ganz weich
-fn sky(dir: vec3<f32>, rough: f32) -> vec3<f32> {
-    if (s.sky_a.w > 0.5) {
-        let lod = rough * max(s.sky_c.w - 2.0, 0.0);
-        return textureSampleLevel(sky_tex, linear_samp, equirect(dir), lod).rgb * s.sky_a.rgb;
-    }
-    let up = clamp(dir.y, 0.0, 1.0);
-    let soft = mix(0.02, 0.6, rough);
-    let above = mix(s.sky_b.rgb, s.sky_a.rgb, pow(up, 0.5));
-    return mix(s.sky_c.rgb, above, smoothstep(-soft, soft, dir.y));
-}
-
-fn sky_diffuse(n: vec3<f32>) -> vec3<f32> {
-    if (s.sky_a.w > 0.5) {
-        return sky(n, 1.0);
-    }
-    let above = (s.sky_a.rgb + s.sky_b.rgb) * 0.5;
-    return mix(s.sky_c.rgb, above, n.y * 0.5 + 0.5);
-}
+#include "_m_sky.wgsl"
 
 fn fog_amount(p: vec3<f32>) -> f32 {
     if (s.fog.w <= 0.0) {
@@ -121,43 +92,6 @@ fn lamp_visibility(l: Lamp, p: vec3<f32>, n: vec3<f32>, frag: vec2<f32>) -> f32 
     return sum / 6.0;
 }
 
-struct Surface {
-    albedo: vec3<f32>,
-    f0: vec3<f32>,
-    rough: f32,
-    n: vec3<f32>,
-    v: vec3<f32>,
-};
-
-// Licht aus Richtung `l` (diffus und Glanz), ohne Farbe der Lampe
-fn brdf(f: Surface, l: vec3<f32>) -> vec3<f32> {
-    let ndl = dot(f.n, l);
-    if (ndl <= 0.0) {
-        return vec3<f32>(0.0);
-    }
-    let h = normalize(l + f.v);
-    let ndv = max(dot(f.n, f.v), 0.0001);
-    let ndh = max(dot(f.n, h), 0.0);
-    let vdh = max(dot(f.v, h), 0.0);
-    let a = f.rough * f.rough;
-    let a2 = a * a;
-    let d = ndh * ndh * (a2 - 1.0) + 1.0;
-    let dist = a2 / (PI * d * d);
-    let vis = 0.5 / max(mix(2.0 * ndl * ndv, ndl + ndv, a), 0.0001);
-    let fres = f.f0 + (vec3<f32>(1.0) - f.f0) * pow(1.0 - vdh, 5.0);
-    return ((vec3<f32>(1.0) - fres) * f.albedo / PI + fres * dist * vis) * ndl * PI;
-}
-
-// Anteil des Umgebungsglanzes (Naeherung nach Karis)
-fn env_brdf(f0: vec3<f32>, rough: f32, ndv: f32) -> vec3<f32> {
-    let c0 = vec4<f32>(-1.0, -0.0275, -0.572, 0.022);
-    let c1 = vec4<f32>(1.0, 0.0425, 1.04, -0.04);
-    let r = rough * c0 + c1;
-    let a004 = min(r.x * r.x, exp2(-9.28 * ndv)) * r.x + r.y;
-    let ab = vec2<f32>(-1.04, 1.04) * a004 + r.zw;
-    return f0 * ab.x + vec3<f32>(ab.y);
-}
-
 fn lamp_light(l: Lamp, f: Surface, p: vec3<f32>, frag: vec2<f32>) -> vec3<f32> {
     let d = l.pos.xyz - p;
     let dist2 = dot(d, d);
@@ -200,10 +134,10 @@ fn lamps_at(f: Surface, p: vec3<f32>, frag: vec2<f32>) -> vec3<f32> {
 // Fertige Farbe einer Flaeche (linear, ohne Obergrenze)
 fn lit(in: VsOut, front: bool) -> vec4<f32> {
     let m = mats[in.material];
-    let base = textureSample(base_tex, mat_samp, in.uv) * m.base * in.color;
-    let mr = textureSample(metal_rough_tex, mat_samp, in.uv);
-    var ao = textureSample(occlusion_tex, mat_samp, in.uv).r;
-    let glow = textureSample(emissive_tex, mat_samp, in.uv).rgb * m.emissive.rgb;
+    let base = textureSampleBias(base_tex, mat_samp, in.uv, s.cam_dir.w) * m.base * in.color;
+    let mr = textureSampleBias(metal_rough_tex, mat_samp, in.uv, s.cam_dir.w);
+    var ao = textureSampleBias(occlusion_tex, mat_samp, in.uv, s.cam_dir.w).r;
+    let glow = textureSampleBias(emissive_tex, mat_samp, in.uv, s.cam_dir.w).rgb * m.emissive.rgb;
     let normal = surface_normal(in, m, front);
     // Glanz auf feinen Unebenheiten flimmert: Rauheit dort anheben
     let dn = fwidth(normal);
@@ -221,14 +155,24 @@ fn lit(in: VsOut, front: bool) -> vec4<f32> {
     f.f0 = mix(vec3<f32>(0.04), base.rgb, metal);
     let frag = in.clip.xy;
 
-    if (s.misc.y > 0.5) {
-        ao = min(ao, textureLoad(ao_tex, vec2<i32>(frag), 0).r);
+    // Werte aus Bildschirm-Durchgaengen gelten nur fuer die vorderste deckende Flaeche
+    let solid = pc.view_proj[0].x < 0.5;
+    let traced = solid && s.rt.y > 0.5;
+    var sun_ray = 1.0;
+    if (solid) {
+        let v = textureLoad(ao_tex, vec2<i32>(frag), 0).rg;
+        if (s.misc.y > 0.5) {
+            ao = min(ao, v.r);
+        }
+        if (s.rt.x > 0.5) {
+            sun_ray = v.g;
+        }
     }
     var col = vec3<f32>(0.0);
     if (s.sun_dir.w > 0.5) {
         let b = brdf(f, s.sun_dir.xyz);
         if (b.x + b.y + b.z > 0.0) {
-            col = col + b * s.sun_color.rgb * sun_visibility(in.world, normalize(in.normal) * select(-1.0, 1.0, front), frag);
+            col = col + b * s.sun_color.rgb * sun_ray * sun_visibility(in.world, normalize(in.normal) * select(-1.0, 1.0, front), frag);
         }
     }
     col = col + lamps_at(f, in.world, frag);
@@ -236,7 +180,15 @@ fn lit(in: VsOut, front: bool) -> vec4<f32> {
     let env = env_brdf(f.f0, f.rough, ndv);
     let r = reflect(-f.v, f.n);
     let spec_ao = clamp(pow(ndv + ao, exp2(-16.0 * f.rough - 1.0)) - 1.0 + ao, 0.0, 1.0);
-    col = col + (sky_diffuse(f.n) * f.albedo * ao + sky(r, f.rough) * env * spec_ao) * s.sky_b.w;
+    var diffuse = sky_diffuse(f.n) * ao * s.sky_b.w;
+    var mirror = sky(r, f.rough) * spec_ao * s.sky_b.w;
+    if (traced) {
+        diffuse = textureLoad(gi_tex, vec2<i32>(frag), 0).rgb;
+    }
+    if (solid && s.rt.z > 0.5) {
+        mirror = textureLoad(refl_tex, vec2<i32>(frag), 0).rgb;
+    }
+    col = col + diffuse * f.albedo + mirror * env;
     col = col + glow;
     col = col + base.rgb * in.glow;
     col = mix(col, s.fog.rgb, fog_amount(in.world));

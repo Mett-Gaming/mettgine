@@ -251,6 +251,60 @@ fn cases() -> Vec<Case> {
             },
         ),
         day("alles", Features::all()),
+        day(
+            "hochskaliert",
+            Features {
+                render_scale: 0.5,
+                sharpen: 0.5,
+                ..Features::all()
+            },
+        ),
+        day(
+            "halb_ohne_taa",
+            Features {
+                render_scale: 0.5,
+                anti_alias: AntiAlias::None,
+                ..Features::all()
+            },
+        ),
+        day(
+            "strahlen_schatten",
+            Features {
+                ssao: Some(Ssao::default()),
+                ray_tracing: RayTracing {
+                    sun_shadows: true,
+                    occlusion: true,
+                    ..Default::default()
+                },
+                ..Features::all()
+            },
+        ),
+        day(
+            "strahlen_alles",
+            Features {
+                ray_tracing: RayTracing::all(),
+                ..Features::all()
+            },
+        ),
+        day(
+            "strahlen_pfade",
+            Features {
+                path_tracing: Some(PathTracing::default()),
+                ..Features::all()
+            },
+        ),
+        day(
+            "strahlen_pfade_still",
+            Features {
+                path_tracing: Some(PathTracing {
+                    samples: 4,
+                    accumulate: true,
+                    ..Default::default()
+                }),
+                anti_alias: AntiAlias::None,
+                ..Features::all()
+            },
+        ),
         Case {
             name: "nacht",
             features: Features {
@@ -324,10 +378,20 @@ fn difference(a: &[[u8; 3]], b: &[[u8; 3]]) -> f64 {
 
 fn run(window: &Window, dir: &Path) -> std::result::Result<(), String> {
     let e = |e: Box<dyn std::error::Error>| e.to_string();
-    let mut r = Renderer::simple(window, &[shapes::cube()]).map_err(e)?;
+    let font = mettgine::ui::font_atlas();
+    let meshes = [shapes::cube()];
+    let config = Config {
+        ray_tracing: true,
+        ..Config::new(&meshes, &[], (&font, 128, 128))
+    };
+    let mut r = Renderer::new(window, &config).map_err(e)?;
+    println!("{}, Raytracing: {}", r.gpu_name(), r.ray_tracing());
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     let world = build(&mut r).map_err(e)?;
-    let all = cases();
+    let mut all = cases();
+    if !r.ray_tracing() {
+        all.retain(|c| !c.name.starts_with("strahlen"));
+    }
     while r.splash_active() {
         shot(&mut r, &world, &all[0], 0, None).map_err(e)?;
         std::thread::sleep(std::time::Duration::from_millis(8));

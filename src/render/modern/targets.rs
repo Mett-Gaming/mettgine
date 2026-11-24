@@ -11,9 +11,11 @@ use super::types::{AntiAlias, Features};
 use ash::vk;
 
 pub const HDR: vk::Format = vk::Format::R16G16B16A16_SFLOAT;
-pub const NORMAL: vk::Format = vk::Format::A2B10G10R10_UNORM_PACK32;
+/// rgb = Normale, a = Rauheit
+pub const NORMAL: vk::Format = vk::Format::R16G16B16A16_SFLOAT;
 pub const MOTION: vk::Format = vk::Format::R16G16_SFLOAT;
-pub const AO: vk::Format = vk::Format::R8_UNORM;
+/// r = Verdeckung, g = Sonnenschatten aus Strahlen
+pub const AO: vk::Format = vk::Format::R8G8_UNORM;
 pub const EXPOSURE: vk::Format = vk::Format::R16_SFLOAT;
 pub const LDR: vk::Format = vk::Format::R8G8B8A8_UNORM;
 /// Stufen des Ueberstrahlens
@@ -22,8 +24,12 @@ const BLOOM_LEVELS: u32 = 6;
 /// Was gebraucht wird; aendert es sich, entstehen die Bilder neu.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Wants {
+    /// gerechnete Aufloesung
     pub width: u32,
     pub height: u32,
+    /// fertige Aufloesung
+    pub out_width: u32,
+    pub out_height: u32,
     /// 0 = keine Sonnenschatten
     pub shadow: u32,
     pub lamps: bool,
@@ -31,19 +37,34 @@ pub struct Wants {
     pub bloom: bool,
     pub taa: bool,
     pub fxaa: bool,
+    /// Strahlen: Streulicht, Spiegelung oder Pathtracing
+    pub rays: bool,
 }
 
 impl Wants {
+    /// Aufloesung der Szene.
+    pub fn scene(&self) -> vk::Extent2D {
+        vk::Extent2D {
+            width: self.width,
+            height: self.height,
+        }
+    }
+
     pub fn new(extent: vk::Extent2D, f: &Features) -> Self {
+        let k = f.render_scale.clamp(0.33, 1.0);
+        let scaled = |v: u32| ((v as f32 * k).round() as u32).max(8);
         Self {
-            width: extent.width,
-            height: extent.height,
+            width: scaled(extent.width),
+            height: scaled(extent.height),
+            out_width: extent.width,
+            out_height: extent.height,
             shadow: f.sun_shadow_size.min(8192),
             lamps: f.lamp_shadows,
-            ssao: f.ssao.is_some(),
+            ssao: f.ssao.is_some() || f.ray_tracing.sun_shadows || f.ray_tracing.occlusion,
             bloom: f.bloom.is_some(),
             taa: f.anti_alias == AntiAlias::Taa,
-            fxaa: f.anti_alias == AntiAlias::Fxaa,
+            fxaa: f.anti_alias == AntiAlias::Fxaa || f.sharpen > 0.0,
+            rays: f.ray_tracing.indirect || f.ray_tracing.reflections || f.path_tracing.is_some(),
         }
     }
 }
@@ -62,6 +83,24 @@ pub struct Targets {
     pub history: Option<[GpuImage; 2]>,
     pub bloom: Vec<(GpuImage, vk::Extent2D)>,
     pub ldr: Option<GpuImage>,
+    pub rays: Option<RayTargets>,
+}
+
+/// Bilder der Strahlen.
+pub struct RayTargets {
+    /// frisch gerechnet, nach dem Entrauschen das Ergebnis (Streulicht, Spiegelung)
+    pub now: [GpuImage; 2],
+    /// Verlauf je Art, abwechselnd beschrieben
+    pub history: [[GpuImage; 2]; 2],
+    /// Zwischenbilder beim Glaetten
+    pub temp: [GpuImage; 2],
+}
+
+impl RayTargets {
+    fn all(&self) -> impl Iterator<Item = &GpuImage> {
+        let pairs = [&self.now, &self.history[0], &self.history[1], &self.temp];
+        pairs.into_iter().flatten()
+    }
 }
 
 impl Targets {
@@ -73,14 +112,26 @@ impl Targets {
         } else {
             None
         };
+        let mut full =
+            |format| arena.image(ctx, &TexDesc::target(w.out_width, w.out_height, format));
         let history = if w.taa {
-            Some([color(HDR)?, color(HDR)?])
+            Some([full(HDR)?, full(HDR)?])
         } else {
             None
         };
-        let ldr = if w.fxaa { Some(color(LDR)?) } else { None };
+        let ldr = if w.fxaa { Some(full(LDR)?) } else { None };
+        let mut color = |format| arena.image(ctx, &TexDesc::target(w.width, w.height, format));
+        let rays = if w.rays {
+            Some(RayTargets {
+                now: [color(HDR)?, color(HDR)?],
+                history: [[color(HDR)?, color(HDR)?], [color(HDR)?, color(HDR)?]],
+                temp: [color(HDR)?, color(HDR)?],
+            })
+        } else {
+            None
+        };
         let mut bloom = Vec::new();
-        let mut size = (w.width / 2, w.height / 2);
+        let mut size = (w.out_width / 2, w.out_height / 2);
         while w.bloom && bloom.len() < BLOOM_LEVELS as usize && size.0.min(size.1) >= 4 {
             let extent = vk::Extent2D {
                 width: size.0,
@@ -119,6 +170,7 @@ impl Targets {
             history,
             bloom,
             ldr,
+            rays,
         })
     }
 
@@ -129,6 +181,9 @@ impl Targets {
         let pairs = self.ao.iter().chain(&self.history).flatten();
         let single = self.sun.iter().chain(&self.lamps).chain(&self.ldr);
         let levels = self.bloom.iter().map(|b| &b.0);
+        for i in self.rays.iter().flat_map(RayTargets::all) {
+            arena.drop_image(d, i);
+        }
         for i in always.into_iter().chain(pairs).chain(single).chain(levels) {
             arena.drop_image(d, i);
         }

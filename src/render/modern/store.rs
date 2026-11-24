@@ -170,15 +170,18 @@ impl Store {
         if !m.joints.is_empty() && m.joints.len() != m.vertices.len() {
             return Err("Modell: Knochen passen nicht zu den Eckpunkten".into());
         }
-        let vertex = vk::BufferUsageFlags::VERTEX_BUFFER;
+        let mut vertex = vk::BufferUsageFlags::VERTEX_BUFFER;
+        let mut index = vk::BufferUsageFlags::INDEX_BUFFER;
+        if ctx.rt.is_some() {
+            let rays = vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
+                | vk::BufferUsageFlags::ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_KHR;
+            vertex |= rays;
+            index |= rays;
+        }
         let (center, radius) = m.bounds();
         let model = Model {
             vertices: self.upload_buffer(ctx, bytemuck::cast_slice(&m.vertices), vertex)?,
-            indices: self.upload_buffer(
-                ctx,
-                bytemuck::cast_slice(&m.indices),
-                vk::BufferUsageFlags::INDEX_BUFFER,
-            )?,
+            indices: self.upload_buffer(ctx, bytemuck::cast_slice(&m.indices), index)?,
             joints: if m.joints.is_empty() {
                 None
             } else {
@@ -266,6 +269,7 @@ impl Store {
 
     /// Zahlenwerte aller Materialien, mindestens eines.
     pub fn material_values(&self) -> Vec<GpuMaterial> {
+        let rays = self.ray_texture_ids();
         self.materials
             .iter()
             .map(|s| {
@@ -282,10 +286,32 @@ impl Store {
                 GpuMaterial {
                     base: m.base_color.to_array(),
                     emissive: m.emissive.extend(normal).to_array(),
-                    params: [m.metallic, m.roughness, cut, 0.0],
+                    params: [m.metallic, m.roughness, cut, ray_texture(&rays, &m)],
                 }
             })
             .collect()
+    }
+
+    /// Farbtexturen, die Strahlen sehen, in fester Reihenfolge.
+    fn ray_texture_ids(&self) -> Vec<TextureId> {
+        let mut ids: Vec<TextureId> = self
+            .materials
+            .iter()
+            .flatten()
+            .filter_map(|m| m.data.base_texture)
+            .filter(|t| self.texture(*t).is_some())
+            .collect();
+        ids.sort_unstable();
+        ids.dedup();
+        ids.truncate(super::rt::MAX_TEXTURES);
+        ids
+    }
+
+    /// Ansichten dazu.
+    pub fn ray_textures(&self) -> impl Iterator<Item = vk::ImageView> + '_ {
+        let ids = self.ray_texture_ids();
+        ids.into_iter()
+            .filter_map(|t| self.texture(t).map(|i| i.view))
     }
 
     pub fn model(&self, id: ModelId) -> Option<&Model> {
@@ -423,6 +449,13 @@ impl Store {
         }
         self.sets.destroy(&ctx.device);
     }
+}
+
+/// Nummer der Farbtextur im Feld der Strahlen plus 1 (0 = keine).
+fn ray_texture(ids: &[TextureId], m: &Material) -> f32 {
+    m.base_texture
+        .and_then(|t| ids.binary_search(&t).ok())
+        .map_or(0.0, |i| i as f32 + 1.0)
 }
 
 fn textures_of(m: &Material) -> [Option<TextureId>; 5] {

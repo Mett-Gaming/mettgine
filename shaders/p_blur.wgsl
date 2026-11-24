@@ -13,14 +13,13 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let px = vec2<i32>(in.pos.xy);
     let size = vec2<i32>(textureDimensions(tex0));
     let d = linear_depth(px);
-    var sum = 0.0;
+    var sum = vec2<f32>(0.0);
     var weight = 0.0;
     for (var i = -4; i <= 4; i = i + 1) {
         let q = clamp(px + vec2<i32>(pc.a.xy) * i, vec2<i32>(0), size - vec2<i32>(1));
         let w = exp(-f32(i * i) * 0.12) * exp(-abs(linear_depth(q) - d) * 12.0 / max(d, 0.1));
-        sum = sum + textureLoad(tex0, q, 0).r * w;
+        sum = sum + textureLoad(tex0, q, 0).rg * w;
         weight = weight + w;
     }
-    let ao = sum / weight;
-    return vec4<f32>(ao, ao, ao, 1.0);
+    return vec4<f32>(sum / weight, 0.0, 1.0);
 }

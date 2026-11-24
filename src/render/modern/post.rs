@@ -12,22 +12,22 @@ use super::{Inputs, Modern};
 use ash::vk;
 use glam::Vec4;
 
-const FRAG: vk::PipelineStageFlags = vk::PipelineStageFlags::FRAGMENT_SHADER;
-const OUT: vk::PipelineStageFlags = vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT;
+pub(super) const FRAG: vk::PipelineStageFlags = vk::PipelineStageFlags::FRAGMENT_SHADER;
+pub(super) const OUT: vk::PipelineStageFlags = vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT;
 
 /// Werte eines Durchgangs, gleich aufgebaut wie `Push` in `_p_common.wgsl`.
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-struct Push {
-    a: [f32; 4],
-    b: [f32; 4],
+pub(super) struct Push {
+    pub a: [f32; 4],
+    pub b: [f32; 4],
     inv: [[f32; 4]; 4],
     c: [f32; 4],
     d: [f32; 4],
 }
 
 impl Push {
-    fn a(a: [f32; 4]) -> Self {
+    pub fn a(a: [f32; 4]) -> Self {
         Self {
             a,
             ..bytemuck::Zeroable::zeroed()
@@ -45,9 +45,9 @@ struct Target {
 
 /// Nachbearbeitung eines Bildes.
 pub(super) struct Post<'a> {
-    m: &'a Modern,
-    i: &'a Inputs<'a>,
-    s: &'a SceneInput<'a>,
+    pub m: &'a Modern,
+    pub i: &'a Inputs<'a>,
+    pub s: &'a SceneInput<'a>,
     /// so viele Sets sind in diesem Bild schon vergeben
     pub used: usize,
 }
@@ -150,7 +150,7 @@ impl<'a> Post<'a> {
     }
 
     /// Durchgang in ein Bild, das danach gelesen wird.
-    unsafe fn draw_into(
+    pub unsafe fn draw_into(
         &mut self,
         pipe: vk::Pipeline,
         (image, extent): (&GpuImage, vk::Extent2D),
@@ -168,15 +168,33 @@ impl<'a> Post<'a> {
         barrier(d, cmd, (OUT, FRAG), &[color_read(image.image)]);
     }
 
-    /// Verdeckung berechnen und glaetten (nach dem Tiefen-Durchgang).
-    pub unsafe fn ssao(&mut self) {
+    /// Verdeckung (und Sonnenschatten aus Strahlen) berechnen und glaetten, nach dem
+    /// Tiefen-Durchgang.
+    pub unsafe fn occlusion(&mut self) {
         let m = self.m;
-        let (Some(t), Some(cfg)) = (&m.targets, &self.s.features.ssao) else {
+        let Some(t) = &m.targets else {
             return;
         };
         let Some([a, b]) = &t.ao else {
             return;
         };
+        let ray = &self.s.features.ray_tracing;
+        if ray.sun_shadows || ray.occlusion {
+            self.ray_visibility(a);
+        } else {
+            self.ssao(t, a);
+        }
+        let cam = &self.s.camera;
+        for (from, to, dir) in [(a, b, [1.0, 0.0]), (b, a, [0.0, 1.0])] {
+            let push = Push::a([dir[0], dir[1], cam.near, cam.far]);
+            let views = [from.view, t.depth.view];
+            self.draw_into(m.pipes.post.blur, (to, self.i.extent), &views, &push);
+        }
+    }
+
+    unsafe fn ssao(&mut self, t: &Targets, out: &GpuImage) {
+        let m = self.m;
+        let cfg = self.s.features.ssao.unwrap_or_default();
         let cam = &self.s.camera;
         let extent = self.i.extent;
         let (w, h) = (extent.width as f32, extent.height as f32);
@@ -200,12 +218,8 @@ impl<'a> Post<'a> {
             c: dir.extend(per_meter).to_array(),
             d: Vec4::ZERO.to_array(),
         };
-        let p = m.pipes.post;
-        self.draw_into(p.ssao, (a, extent), &[t.depth.view, t.normal.view], &push);
-        for (from, to, dir) in [(a, b, [1.0, 0.0]), (b, a, [0.0, 1.0])] {
-            let push = Push::a([dir[0], dir[1], cam.near, cam.far]);
-            self.draw_into(p.blur, (to, extent), &[from.view, t.depth.view], &push);
-        }
+        let views = [t.depth.view, t.normal.view];
+        self.draw_into(m.pipes.post.ssao, (out, extent), &views, &push);
     }
 
     /// Alles nach der Beleuchtung, bis ins Szenenbild des Renderers.
@@ -233,11 +247,13 @@ impl<'a> Post<'a> {
         } else {
             t.hdr.view
         };
-        let e = self.i.extent;
+        let (e, out) = (self.i.extent, self.i.out);
         let valid = m.history_valid as u8 as f32;
-        let push = Push::a([e.width as f32, e.height as f32, valid, 0.0]);
+        let mut push = Push::a([e.width as f32, e.height as f32, valid, 0.0]);
+        let jitter = super::gpu::jitter(m.number);
+        push.b = [out.width as f32, out.height as f32, jitter.x, jitter.y];
         let views = [t.hdr.view, old_view, t.motion.view, t.depth.view];
-        self.draw_into(m.pipes.post.taa, (new, e), &views, &push);
+        self.draw_into(m.pipes.post.taa, (new, out), &views, &push);
         new.view
     }
 
@@ -270,7 +286,9 @@ impl<'a> Post<'a> {
         let cfg = self.s.features.bloom?;
         let (d, cmd) = (&self.i.ctx.device, self.i.cmd);
         let inv = |e: vk::Extent2D| (1.0 / e.width as f32, 1.0 / e.height as f32);
-        let (mut src, mut size) = (hdr, self.i.extent);
+        let has_taa = t.history.is_some();
+        let full = if has_taa { self.i.out } else { self.i.extent };
+        let (mut src, mut size) = (hdr, full);
         for (k, (image, extent)) in t.bloom.iter().enumerate() {
             let (x, y) = inv(size);
             let first = (k == 0) as u8 as f32;
@@ -319,7 +337,7 @@ impl<'a> Post<'a> {
         let push = Push::a([kind, strength, 0.0, 0.0]);
         let views = [hdr, bloom.unwrap_or(hdr), exposure];
         let (d, cmd) = (&self.i.ctx.device, self.i.cmd);
-        let extent = self.i.extent;
+        let extent = self.i.out;
         barrier(d, cmd, (FRAG | OUT, OUT), &[color_target(self.i.color)]);
         let screen = Target {
             view: self.i.color_view,
@@ -331,8 +349,14 @@ impl<'a> Post<'a> {
             Some(ldr) => {
                 self.draw_into(m.pipes.post.tonemap, (ldr, extent), &views, &push);
                 let (x, y) = (1.0 / extent.width as f32, 1.0 / extent.height as f32);
-                let push = Push::a([x, y, 0.0, 0.0]);
-                self.pass(m.pipes.post.fxaa, screen, &[ldr.view], &push);
+                let fxaa = f.anti_alias == AntiAlias::Fxaa;
+                let pipe = if fxaa {
+                    m.pipes.post.fxaa
+                } else {
+                    m.pipes.post.sharpen
+                };
+                let push = Push::a([x, y, f.sharpen.clamp(0.0, 1.0), 0.0]);
+                self.pass(pipe, screen, &[ldr.view], &push);
             }
         }
     }

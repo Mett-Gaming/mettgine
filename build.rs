@@ -19,17 +19,7 @@ fn main() {
         if name.starts_with('_') {
             continue; // nur zum Einbinden gedacht
         }
-        // Minimaler Praeprozessor: `#include "datei.wgsl"`
-        let src: String = fs::read_to_string(&path)
-            .unwrap()
-            .lines()
-            .map(|line| match line.trim().strip_prefix("#include ") {
-                Some(inc) => fs::read_to_string(format!("shaders/{}", inc.trim_matches('"')))
-                    .unwrap_or_else(|_| panic!("{name}: include {inc} fehlt")),
-                None => line.to_string(),
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
+        let src = read_with_includes(&path, 0);
 
         let module = naga::front::wgsl::parse_str(&src).unwrap_or_else(|e| {
             panic!(
@@ -51,7 +41,10 @@ fn main() {
                 "fs_main" => "frag",
                 other => other,
             };
-            let options = naga::back::spv::Options::default();
+            let mut options = naga::back::spv::Options::default();
+            if name.starts_with("rt_") {
+                options.lang_version = (1, 4); // Strahlabfragen
+            }
             let pipeline = naga::back::spv::PipelineOptions {
                 shader_stage: stage,
                 entry_point: entry_point.to_string(),
@@ -62,4 +55,20 @@ fn main() {
             fs::write(out.join(format!("{name}.{suffix}.spv")), bytes).unwrap();
         }
     }
+}
+
+/// Minimaler Praeprozessor: `#include "datei.wgsl"`, auch verschachtelt.
+fn read_with_includes(path: &std::path::Path, depth: usize) -> String {
+    assert!(depth < 8, "{}: Includes im Kreis", path.display());
+    let text = fs::read_to_string(path).unwrap_or_else(|e| panic!("{} fehlt: {e}", path.display()));
+    text.lines()
+        .map(|line| match line.trim().strip_prefix("#include ") {
+            Some(inc) => {
+                let file = PathBuf::from("shaders").join(inc.trim_matches('"'));
+                read_with_includes(&file, depth + 1)
+            }
+            None => line.to_string(),
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }

@@ -80,6 +80,15 @@ pub struct Lists {
     pub culled: u32,
 }
 
+/// Ein Objekt fuer die Strahlen.
+#[derive(Clone, Copy, Debug)]
+pub struct RtItem {
+    pub kind: Kind,
+    pub obj: u32,
+    pub model: u32,
+    pub material: u32,
+}
+
 /// Was die einfachen Modelle und Figuren brauchen.
 pub struct Plain<'a> {
     pub mesh_bounds: &'a [Sphere],
@@ -89,6 +98,8 @@ pub struct Plain<'a> {
     /// Welt-Boxen und das Modell, mit dem sie gezeichnet werden
     pub boxes: &'a [GpuInstance],
     pub cube: u32,
+    /// einfache Modelle als Modelle mit Index (nur mit Raytracing, sonst leer)
+    pub mesh_models: &'a [Option<ModelId>],
     /// feste Modelle
     pub statics: &'a [MeshDraw],
 }
@@ -190,7 +201,11 @@ impl Lists {
             let Some(bounds) = plain.mesh_bounds.get(m.mesh) else {
                 continue;
             };
-            let key = plain_key(Kind::Mesh, plain.material, m.mesh as u32);
+            let converted = plain.mesh_models.get(m.mesh).copied().flatten();
+            let key = match converted {
+                Some(id) => plain_key(Kind::Object, plain.material, id.0),
+                None => plain_key(Kind::Mesh, plain.material, m.mesh as u32),
+            };
             let item = Item {
                 key,
                 obj: 0,
@@ -234,23 +249,49 @@ impl Lists {
     /// Deckende Objekte einer Sicht; liefert ihre Zeichenbefehle.
     pub fn view(&mut self, view_proj: &Mat4, shadow: bool) -> Range<usize> {
         let frustum = Frustum::new(view_proj);
-        self.gather(shadow, |s| frustum.sees(s))
+        self.gather(shadow, false, |s| frustum.sees(s))
+    }
+
+    /// Schattensicht nur fuer das, was Strahlen nicht sehen (Figuren).
+    pub fn view_without_rays(&mut self, view_proj: &Mat4) -> Range<usize> {
+        let frustum = Frustum::new(view_proj);
+        self.gather(true, true, |s| frustum.sees(s))
+    }
+
+    /// Alles, was Strahlen treffen koennen.
+    pub fn rt_items(&self) -> Vec<RtItem> {
+        self.items
+            .iter()
+            .filter(|i| i.key.kind == Kind::Object && !i.blend)
+            .map(|i| RtItem {
+                kind: i.key.kind,
+                obj: i.obj,
+                model: i.key.model,
+                material: i.key.material,
+            })
+            .collect()
     }
 
     /// Wie [`Lists::view`] fuer eine Lampe: zusaetzlich nur, was in ihrer Reichweite liegt.
     pub fn lamp_view(&mut self, view_proj: &Mat4, pos: Vec3, range: f32) -> Range<usize> {
         let frustum = Frustum::new(view_proj);
-        self.gather(true, |s| {
+        self.gather(true, false, |s| {
             let reach = range + s.radius;
             s.center.distance_squared(pos) < reach * reach && frustum.sees(s)
         })
     }
 
-    fn gather(&mut self, shadow: bool, sees: impl Fn(&Sphere) -> bool) -> Range<usize> {
+    fn gather(
+        &mut self,
+        shadow: bool,
+        skip_rays: bool,
+        sees: impl Fn(&Sphere) -> bool,
+    ) -> Range<usize> {
         let start = self.batches.len();
         let mut last: Option<Key> = None;
         for i in &self.items {
-            if i.blend || (shadow && !i.shadow) {
+            let ray = skip_rays && i.key.kind == Kind::Object;
+            if i.blend || ray || (shadow && !i.shadow) {
                 continue;
             }
             let visible = i.sphere.as_ref().is_none_or(&sees);

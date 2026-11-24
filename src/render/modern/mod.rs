@@ -21,6 +21,8 @@ mod model;
 mod pipes;
 mod post;
 mod prepare;
+mod rays;
+mod rt;
 mod scene;
 mod sets;
 mod store;
@@ -113,6 +115,9 @@ pub(crate) struct Modern {
     clusters: clusters::Clusters,
     views: Views,
     tiles: Vec<atlas::Tile>,
+    rt: Option<rt::Rt>,
+    /// einfache Modelle, fuer Strahlen umgewandelt
+    mesh_models: Vec<Option<ModelId>>,
     plain_material: MaterialId,
     /// Einheitswuerfel fuer die Welt-Boxen
     cube: ModelId,
@@ -132,13 +137,18 @@ pub(crate) struct Inputs<'a> {
     pub ctx: &'a Context,
     pub cmd: vk::CommandBuffer,
     pub fi: usize,
+    /// Aufloesung der Szene (setzt die Aufnahme aus `out` und der Einstellung)
     pub extent: vk::Extent2D,
+    /// Aufloesung des Ziels
+    pub out: vk::Extent2D,
     /// Ziel: das Szenenbild des Renderers
     pub color: vk::Image,
     pub color_view: vk::ImageView,
     pub bones: &'a Buffer,
     pub particles: (vk::Buffer, u32),
     pub mesh_vertices: vk::Buffer,
+    /// dieselben Daten, vom Prozessor lesbar
+    pub mesh_buffer: &'a Buffer,
     pub mesh_ranges: &'a [(u32, u32)],
     pub skin_vertices: vk::Buffer,
     pub skin_ranges: &'a [(u32, u32)],
@@ -148,17 +158,38 @@ pub(crate) struct Inputs<'a> {
     pub statics: &'a [MeshDraw],
 }
 
+impl Inputs<'_> {
+    /// Eckpunkte aller einfachen Modelle (langsam, nur einmal beim Umwandeln).
+    fn mesh_vertices_data(&self) -> Vec<crate::gpu::MeshVertex> {
+        let size = size_of::<crate::gpu::MeshVertex>();
+        let ends = self.mesh_ranges.iter().map(|(f, c)| (f + c) as usize);
+        let count = ends
+            .max()
+            .unwrap_or(0)
+            .min(self.mesh_buffer.size as usize / size);
+        let bytes = self.mesh_buffer.read(count * size);
+        let chunks = bytes.chunks(size);
+        chunks.map(bytemuck::pod_read_unaligned).collect()
+    }
+}
+
 impl Modern {
     pub fn new(ctx: &Context, pool: vk::CommandPool, swapchain: vk::Format) -> Result<Self> {
         let mut store = Store::new(ctx)?;
         let plain_material = store.add_material(ctx, &Material::default())?;
-        let cube = store.add_model(ctx, &ModelData::from_mesh(&crate::shapes::cube()))?;
+        let mut rt = rt::Rt::new(ctx)?;
+        let cube_data = ModelData::from_mesh(&crate::shapes::cube());
+        let cube = store.add_model(ctx, &cube_data)?;
+        if let Some(rt) = &mut rt {
+            rt.add(ctx, &mut store.arena, cube.0, &cube_data)?;
+        }
         let sets = sets::Sets::new(ctx, FRAMES_IN_FLIGHT)?;
         let pipes = pipes::Pipes::new(
             ctx,
             sets.frame_layout,
             store.sets.layout,
             sets.post_layout,
+            rt.as_ref().map(|r| r.layout),
             swapchain,
         )?;
         let fixed = Fixed::new(ctx, pool, &mut store.arena)?;
@@ -175,6 +206,8 @@ impl Modern {
             clusters: clusters::Clusters::default(),
             views: Views::default(),
             tiles: Vec::new(),
+            rt,
+            mesh_models: Vec::new(),
             plain_material,
             cube,
             number: 0,
@@ -209,7 +242,8 @@ impl Modern {
 
     /// Sichten berechnen, Objekte sortieren, Puffer fuellen, Sets schreiben.
     fn prepare(&mut self, i: &Inputs, f: &FrameInput, s: &SceneInput) -> Result<()> {
-        self.ensure_targets(i.ctx, Wants::new(i.extent, &s.features))?;
+        self.convert_meshes(i)?;
+        self.ensure_targets(i.ctx, Wants::new(i.out, &s.features))?;
         if s.cut {
             self.history_valid = false;
         }
@@ -221,6 +255,7 @@ impl Modern {
             boxes: i.boxes,
             cube: self.cube.0,
             statics: i.statics,
+            mesh_models: &self.mesh_models,
         };
         self.lists.collect(f, s, &self.store, &plain);
         let cascades = self.sun_views(s);
@@ -247,6 +282,8 @@ impl Modern {
                 atlas: atlas::ATLAS_SIZE,
                 sky_mips: self.sky_texture(s).1,
                 time: f.time,
+                number: self.number,
+                lamps: lights.len(),
             },
         );
         self.fill(i, s, &scene)?;
@@ -264,7 +301,11 @@ impl Modern {
         }
         let c = cascades::cascades(&s.camera, sun.dir, sun.shadow_distance, size);
         for c in &c {
-            let r = self.lists.view(&c.view_proj, true);
+            let r = if s.features.ray_tracing.sun_shadows {
+                self.lists.view_without_rays(&c.view_proj)
+            } else {
+                self.lists.view(&c.view_proj, true)
+            };
             self.views.sun.push((c.view_proj, r));
         }
         Some(c)
@@ -348,10 +389,20 @@ impl Modern {
         let sets = &self.sets.frames[i.fi];
         let array = self.fixed.dummy_array.view;
         let w = |set, images, layout| self.sets.write_frame(i.ctx, set, buffers, images, layout);
-        w(sets[0], [array, dummy, white, sky, dummy], read);
-        w(sets[1], [sun, lamps, ao, sky, dummy], read);
+        let rays = t.rays.as_ref().map(|r| [r.now[0].view, r.now[1].view]);
+        let [gi, mirror] = rays.unwrap_or([white; 2]);
+        w(
+            sets[0],
+            [array, dummy, white, sky, dummy, white, white],
+            read,
+        );
+        w(sets[1], [sun, lamps, ao, sky, dummy, gi, mirror], read);
         let depth = vk::ImageLayout::DEPTH_STENCIL_READ_ONLY_OPTIMAL;
-        w(sets[2], [sun, lamps, ao, sky, t.depth.view], depth);
+        w(
+            sets[2],
+            [sun, lamps, ao, sky, t.depth.view, gi, mirror],
+            depth,
+        );
     }
 
     /// Ein Bild aufnehmen; das Ergebnis liegt danach als Farbziel in `i.color`.
@@ -360,21 +411,35 @@ impl Modern {
     /// `i.cmd` muss aufgenommen werden, die GPU mit Bild `i.fi` fertig sein.
     pub unsafe fn record(
         &mut self,
-        i: &Inputs,
+        i: &mut Inputs,
         f: &FrameInput,
         s: &SceneInput,
         mark: &mut dyn FnMut(&'static str),
     ) -> Result<()> {
+        // Strahlen nur, wenn die Karte sie kann
+        let mut limited = *s;
+        if self.rt.is_none() {
+            limited.features.ray_tracing = RayTracing::default();
+            limited.features.path_tracing = None;
+        }
+        let s = &limited;
+        i.extent = Wants::new(i.out, &s.features).scene();
+        let i = &*i;
+        let same_camera = self.prev_view_proj == Some(s.camera.view_proj());
         self.prepare(i, f, s)?;
         self.store.begin_frame(i.ctx, i.cmd);
         self.record_shadows(i);
         mark("Schatten");
         self.record_prepass(i);
         mark("Tiefe");
+        self.build_rays(i, s)?;
         let mut post = post::Post::new(self, i, s);
-        post.ssao();
-        mark("Verdeckung");
-        self.record_lit(i, s);
+        post.occlusion();
+        post.rays(same_camera);
+        mark("Verdeckung, Strahlen");
+        if s.features.path_tracing.is_none() {
+            self.record_lit(i, s);
+        }
         mark("Beleuchtung");
         let used = post.used;
         let mut post = post::Post::new(self, i, s);
@@ -415,6 +480,9 @@ impl Modern {
             t.destroy(&mut self.store.arena, d);
         }
         self.fixed.destroy(&mut self.store.arena, d);
+        if let Some(rt) = &mut self.rt {
+            rt.destroy(ctx, &mut self.store.arena);
+        }
         self.pipes.destroy(d);
         self.sets.destroy(d);
         self.store.destroy(ctx);

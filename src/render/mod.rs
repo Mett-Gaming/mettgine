@@ -259,6 +259,11 @@ impl Renderer {
         &self.ctx.gpu_name
     }
 
+    /// Ist Raytracing eingeschaltet und von der Karte unterstuetzt?
+    pub fn ray_tracing(&self) -> bool {
+        self.ctx.rt.is_some()
+    }
+
     /// Laeuft noch das Startbild der Engine? Dann keine Eingaben annehmen.
     pub fn splash_active(&self) -> bool {
         self.splash.active()

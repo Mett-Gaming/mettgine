@@ -43,6 +43,9 @@ pub struct Config<'a> {
     pub last_wins: bool,
     /// Materialien der Welt-Boxen
     pub world: WorldShaders<'a>,
+    /// Raytracing einschalten (Vorgabe: aus). Ob es klappt, sagt
+    /// [`super::Renderer::ray_tracing`]
+    pub ray_tracing: bool,
 }
 
 impl<'a> Config<'a> {
@@ -63,6 +66,7 @@ impl<'a> Config<'a> {
             smooth: true,
             last_wins: true,
             world: WorldShaders::default(),
+            ray_tracing: false,
         }
     }
 }

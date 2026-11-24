@@ -38,5 +38,5 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         sum = sum + h / sqrt(d2 + 0.0001) * fall;
     }
     let ao = max(1.0 - sum / f32(count) * 2.4 * pc.a.w, 0.0);
-    return vec4<f32>(ao, ao, ao, 1.0);
+    return vec4<f32>(ao, 1.0, 0.0, 1.0);
 }

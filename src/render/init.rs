@@ -165,7 +165,7 @@ impl Renderer {
     pub fn new(window: &Window, cfg: &Config) -> Result<Self> {
         let size = window.inner_size();
         let window_size = (size.width.max(1), size.height.max(1));
-        let ctx = Context::new(window)?;
+        let ctx = Context::new(window, cfg.ray_tracing)?;
         let swapchain = Swapchain::new(&ctx, window_size, true, vk::SwapchainKHR::null())?;
         let offscreen = offscreen_extent(window_size, cfg.resolution);
         let samples = vk::SampleCountFlags::TYPE_1;

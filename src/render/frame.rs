@@ -136,16 +136,18 @@ impl Renderer {
         n: Counts,
     ) -> Result<()> {
         let mut m = self.modern.take().ok_or("moderne Grafik fehlt")?;
-        let inputs = modern::Inputs {
+        let mut inputs = modern::Inputs {
             ctx: &self.ctx,
             cmd,
             fi,
             extent: self.offscreen,
+            out: self.offscreen,
             color: self.color.image,
             color_view: self.color.view,
             bones: &self.bone_bufs[fi],
             particles: (self.particle_bufs[fi].buffer, n.particles),
             mesh_vertices: self.mesh_vertex_buf.buffer,
+            mesh_buffer: &self.mesh_vertex_buf,
             mesh_ranges: &self.mesh_ranges,
             skin_vertices: self.skin_vertex_buf.buffer,
             skin_ranges: &self.skin_ranges,
@@ -156,7 +158,9 @@ impl Renderer {
         };
         let timer = &self.timer;
         let d = &self.ctx.device;
-        let result = m.record(&inputs, f, scene, &mut |name| timer.mark(d, cmd, fi, name));
+        let result = m.record(&mut inputs, f, scene, &mut |name| {
+            timer.mark(d, cmd, fi, name)
+        });
         let (drawn, culled, calls) = m.counts();
         self.stats.drawn = drawn;
         self.stats.culled = culled;

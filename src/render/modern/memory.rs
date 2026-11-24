@@ -99,15 +99,16 @@ impl Arena {
             }
         }
         let size = req.size.max(BLOCK);
+        let mut flags =
+            vk::MemoryAllocateFlagsInfo::default().flags(vk::MemoryAllocateFlags::DEVICE_ADDRESS);
+        let mut info = vk::MemoryAllocateInfo::default()
+            .allocation_size(size)
+            .memory_type_index(ty);
+        if ctx.rt.is_some() {
+            info = info.push_next(&mut flags);
+        }
         // SAFETY: gueltiges Geraet; freigegeben in `destroy`.
-        let memory = unsafe {
-            ctx.device.allocate_memory(
-                &vk::MemoryAllocateInfo::default()
-                    .allocation_size(size)
-                    .memory_type_index(ty),
-                None,
-            )?
-        };
+        let memory = unsafe { ctx.device.allocate_memory(&info, None)? };
         let mut list = FreeList::new(size);
         let at = list.alloc(req.size, req.alignment).unwrap_or(0);
         self.blocks.push(Block {

@@ -179,6 +179,52 @@ pub enum Exposure {
     Auto { min: f32, max: f32, speed: f32 },
 }
 
+/// Raytracing-Zusaetze; wirken nur, wenn [`super::super::Renderer::ray_tracing`] es meldet, sonst
+/// bleibt die uebliche Grafik. Animierte Figuren werfen weiter Schatten aus der Schattenkarte und
+/// erscheinen nicht in Spiegelungen.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RayTracing {
+    /// Sonnenschatten aus Strahlen
+    pub sun_shadows: bool,
+    /// Verdeckung aus Strahlen (Reichweite und Staerke aus [`Ssao`])
+    pub occlusion: bool,
+    /// Licht, das von Flaechen abprallt
+    pub indirect: bool,
+    pub reflections: bool,
+}
+
+impl RayTracing {
+    /// Alles an.
+    pub fn all() -> Self {
+        Self {
+            sun_shadows: true,
+            occlusion: true,
+            indirect: true,
+            reflections: true,
+        }
+    }
+}
+
+/// Das ganze Bild aus Strahlen. Halbtransparentes, Partikel und animierte Figuren fehlen.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PathTracing {
+    pub bounces: u32,
+    /// Strahlen je Bildpunkt und Bild
+    pub samples: u32,
+    /// Bei stehender Kamera immer weiter mitteln (Standbilder); bewegte Dinge ziehen dann nach
+    pub accumulate: bool,
+}
+
+impl Default for PathTracing {
+    fn default() -> Self {
+        Self {
+            bounces: 4,
+            samples: 1,
+            accumulate: false,
+        }
+    }
+}
+
 /// Schaltbare Grafik. Vorgabe: alles aus.
 #[derive(Clone, Copy, Debug)]
 pub struct Features {
@@ -192,6 +238,13 @@ pub struct Features {
     pub sun_shadow_size: u32,
     /// Schatten von Lampen
     pub lamp_shadows: bool,
+    pub ray_tracing: RayTracing,
+    pub path_tracing: Option<PathTracing>,
+    /// Anteil der Bildaufloesung, in der die Szene gerechnet wird (0,33 bis 1). Darunter setzt TAA
+    /// das volle Bild aus mehreren Bildern zusammen; ohne TAA wird nur weich vergroessert
+    pub render_scale: f32,
+    /// Nachschaerfen (0 = aus, 1 = kraeftig)
+    pub sharpen: f32,
 }
 
 impl Default for Features {
@@ -205,6 +258,10 @@ impl Default for Features {
             fog: None,
             sun_shadow_size: 0,
             lamp_shadows: false,
+            ray_tracing: RayTracing::default(),
+            path_tracing: None,
+            render_scale: 1.0,
+            sharpen: 0.0,
         }
     }
 }
@@ -221,6 +278,10 @@ impl Features {
             fog: None,
             sun_shadow_size: 2048,
             lamp_shadows: true,
+            ray_tracing: RayTracing::default(),
+            path_tracing: None,
+            render_scale: 1.0,
+            sharpen: 0.0,
         }
     }
 }
