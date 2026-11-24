@@ -11,7 +11,20 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     if (pc.a.z < 0.5) {
         return vec4<f32>(now, 1.0);
     }
-    let motion = textureLoad(tex2, px, 0).xy;
+    // Bewegung der vordersten Flaeche ringsum: Kanten nehmen ihren Verlauf mit
+    var best = px;
+    var best_z = 2.0;
+    for (var y = -1; y <= 1; y = y + 1) {
+        for (var x = -1; x <= 1; x = x + 1) {
+            let q = clamp(px + vec2<i32>(x, y), vec2<i32>(0), last);
+            let z = textureLoad(tex3, q, 0).r;
+            if (z < best_z) {
+                best_z = z;
+                best = q;
+            }
+        }
+    }
+    let motion = textureLoad(tex2, best, 0).xy;
     let uv = in.uv - motion;
     if (uv.x < 0.0 || uv.y < 0.0 || uv.x > 1.0 || uv.y > 1.0) {
         return vec4<f32>(now, 1.0);

@@ -9,7 +9,7 @@ use super::super::pipelines::{
 use super::super::Result;
 use super::model::{Joints, Vertex};
 use super::prepare::{Kind, KINDS};
-use super::targets::{AO, EXPOSURE, GUIDE, HDR, MOTION, NORMAL, REACTIVE};
+use super::targets::{AO, EXPOSURE, GUIDE, HDR, MOTION, NORMAL, PICKS, REACTIVE};
 use crate::gpu::{MeshVertex, SkinVertex};
 use crate::particles::ParticleInst;
 use ash::vk;
@@ -153,6 +153,8 @@ pub struct RayPipes {
     pub vis: vk::Pipeline,
     pub gi: vk::Pipeline,
     pub path: vk::Pipeline,
+    pub lamps: vk::Pipeline,
+    pub lampshade: vk::Pipeline,
 }
 
 unsafe fn ray_pipes(
@@ -173,6 +175,8 @@ unsafe fn ray_pipes(
         vis: make(spv!("rt_vis.frag"), AO, &[])?,
         gi: make(spv!("rt_gi.frag"), HDR, &[HDR])?,
         path: make(spv!("rt_path.frag"), HDR, &[HDR])?,
+        lamps: make(spv!("rt_lamps.frag"), PICKS, &[])?,
+        lampshade: make(spv!("rt_lampshade.frag"), HDR, &[HDR])?,
         layout,
     })
 }
@@ -435,7 +439,7 @@ impl Pipes {
             d.destroy_pipeline(p, None);
         }
         if let Some(r) = &self.rays {
-            for p in [r.vis, r.gi, r.path] {
+            for p in [r.vis, r.gi, r.path, r.lamps, r.lampshade] {
                 d.destroy_pipeline(p, None);
             }
             d.destroy_pipeline_layout(r.layout, None);

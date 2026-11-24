@@ -420,18 +420,25 @@ impl Modern {
         let sets = &self.sets.frames[i.fi];
         let array = self.fixed.dummy_array.view;
         let w = |set, images, layout| self.sets.write_frame(i.ctx, set, buffers, images, layout);
-        let rays = t.rays.as_ref().map(|r| [r.now[0].view, r.now[1].view]);
-        let [gi, mirror] = rays.unwrap_or([white; 2]);
+        let now = |k: usize| {
+            let image = t.rays.as_ref().and_then(|r| r.now.get(k));
+            image.map_or(white, |i| i.view)
+        };
+        let [gi, mirror, lamp, gloss] = [0, 1, 2, 3].map(now);
         w(
             sets[0],
-            [array, dummy, white, sky, dummy, white, white],
+            [array, dummy, white, sky, dummy, white, white, white, white],
             read,
         );
-        w(sets[1], [sun, lamps, ao, sky, dummy, gi, mirror], read);
+        w(
+            sets[1],
+            [sun, lamps, ao, sky, dummy, gi, mirror, lamp, gloss],
+            read,
+        );
         let depth = vk::ImageLayout::DEPTH_STENCIL_READ_ONLY_OPTIMAL;
         w(
             sets[2],
-            [sun, lamps, ao, sky, t.depth.view, gi, mirror],
+            [sun, lamps, ao, sky, t.depth.view, gi, mirror, lamp, gloss],
             depth,
         );
     }
@@ -474,8 +481,13 @@ impl Modern {
         post.occlusion();
         post.rays(same_camera);
         mark("Verdeckung, Strahlen");
-        if s.features.path_tracing.is_none() {
-            self.record_lit(i, s);
+        let traced = s.features.path_tracing.is_some();
+        let still = s.features.path_tracing.is_some_and(|p| p.accumulate);
+        let rest =
+            i.particles.1 > 0 || !self.views.blend.is_empty() || !self.views.decals.is_empty();
+        // Standbilder zeigen nur, was Strahlen sehen
+        if !traced || (rest && !still) || wants.vendor {
+            self.record_lit(i, s, traced);
         }
         mark("Beleuchtung");
         let used = post.used;

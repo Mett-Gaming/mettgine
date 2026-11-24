@@ -330,6 +330,16 @@ fn cases() -> Vec<Case> {
             },
             night: true,
         },
+        day(
+            "strahlen_lampen",
+            Features {
+                ray_tracing: RayTracing {
+                    lamps: true,
+                    ..Default::default()
+                },
+                ..Features::all()
+            },
+        ),
     ]
 }
 

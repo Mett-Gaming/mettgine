@@ -7,7 +7,7 @@ use super::super::Result;
 use super::memory::GpuImage;
 use super::post::{Post, Push, FRAG, OUT};
 use super::scene::{barrier, color_read, color_target};
-use super::targets::RayTargets;
+use super::targets::{RayTargets, Targets};
 use super::types::*;
 use super::{Inputs, Modern};
 use ash::vk;
@@ -67,7 +67,13 @@ impl Modern {
         let (Some(rt), Some(t)) = (&mut self.rt, &self.targets) else {
             return Ok(());
         };
-        let views = (t.depth.view, t.normal.view);
+        let picks = t.rays.as_ref().and_then(|r| r.picks.as_ref());
+        let views = super::rt::Views {
+            depth: t.depth.view,
+            normal: t.normal.view,
+            motion: t.motion.view,
+            picks: picks.map(|p| [p[self.ping].view, p[self.ping ^ 1].view]),
+        };
         let source = super::rt::Source {
             bones: i.bones.buffer,
             skins: i.skin_vertices,
@@ -79,14 +85,16 @@ impl Modern {
             &mut self.store,
             &self.lists,
             source,
-            views,
+            &views,
         )
     }
 }
 
 impl Post<'_> {
     /// Ein Durchgang mit Strahlen in ein oder zwei Bilder, die danach gelesen werden.
-    unsafe fn ray_pass(&mut self, pipe: vk::Pipeline, out: &[&GpuImage], push: &Push) {
+    ///
+    /// `k` = gewaehlte Lampen des letzten (0) oder dieses Bildes (1) lesen.
+    unsafe fn ray_pass(&mut self, pipe: vk::Pipeline, out: &[&GpuImage], push: &Push, k: usize) {
         let (Some(rt), Some(pipes)) = (&self.m.rt, &self.m.pipes.rays) else {
             return;
         };
@@ -112,7 +120,7 @@ impl Post<'_> {
         );
         set_viewport(d, cmd, self.i.extent);
         let gfx = vk::PipelineBindPoint::GRAPHICS;
-        let sets = [self.m.sets.frames[self.i.fi][0], rt.sets[self.i.fi]];
+        let sets = [self.m.sets.frames[self.i.fi][0], rt.sets[self.i.fi][k]];
         d.cmd_bind_pipeline(cmd, gfx, pipe);
         d.cmd_bind_descriptor_sets(cmd, gfx, pipes.layout, 0, &sets, &[]);
         d.cmd_push_constants(
@@ -131,7 +139,7 @@ impl Post<'_> {
     /// Verdeckung und Sonnenschatten.
     pub(super) unsafe fn ray_visibility(&mut self, out: &GpuImage) {
         if let Some(p) = &self.m.pipes.rays {
-            self.ray_pass(p.vis, &[out], &Push::a([0.0; 4]));
+            self.ray_pass(p.vis, &[out], &Push::a([0.0; 4]), 0);
         }
     }
 
@@ -145,16 +153,16 @@ impl Post<'_> {
             return;
         };
         let f = &self.s.features;
-        let [first, second] = &r.now;
+        let (first, second) = (&r.now[0], &r.now[1]);
         if let Some(cfg) = f.path_tracing {
             let push = Push::a([
                 cfg.bounces.min(16) as f32,
                 cfg.samples.clamp(1, 64) as f32,
                 // die Technik erwartet genau die Stelle aus dem Tiefen-Durchgang
-                if t.wants.guides { 0.0 } else { 1.0 },
+                if t.wants.temporal() { 0.0 } else { 1.0 },
                 0.0,
             ]);
-            self.ray_pass(p.path, &[first, second], &push);
+            self.ray_pass(p.path, &[first, second], &push, 0);
             let still = cfg.accumulate && same_camera && !t.wants.guides;
             if !t.wants.guides {
                 self.denoise(r, 0, still, true);
@@ -170,10 +178,11 @@ impl Post<'_> {
             self.draw_into(m.pipes.post.compose, (&t.hdr, self.i.extent), &views, &push);
             return;
         }
+        self.lamps(t, r);
         if !(f.ray_tracing.indirect || f.ray_tracing.reflections) {
             return;
         }
-        self.ray_pass(p.gi, &[first, second], &Push::a([0.0; 4]));
+        self.ray_pass(p.gi, &[first, second], &Push::a([0.0; 4]), 0);
         if t.wants.guides {
             return;
         }
@@ -182,6 +191,31 @@ impl Post<'_> {
         }
         if f.ray_tracing.reflections {
             self.denoise(r, 1, false, false);
+        }
+    }
+
+    /// Lampenlicht: Lampe je Bildpunkt waehlen, beleuchten, entrauschen.
+    unsafe fn lamps(&mut self, t: &Targets, r: &RayTargets) {
+        let m = self.m;
+        let (Some(picks), Some(p)) = (&r.picks, &m.pipes.rays) else {
+            return;
+        };
+        let (old, new) = (&picks[m.ping], &picks[m.ping ^ 1]);
+        if !m.history_valid {
+            // noch nie beschrieben: wenigstens in einen lesbaren Zustand bringen
+            let (d, cmd) = (&self.i.ctx.device, self.i.cmd);
+            let mut b = color_read(old.image);
+            b.old_layout = vk::ImageLayout::UNDEFINED;
+            b.src_access_mask = vk::AccessFlags::empty();
+            barrier(d, cmd, (FRAG | OUT, FRAG), &[b]);
+        }
+        let valid = m.history_valid as u8 as f32;
+        self.ray_pass(p.lamps, &[new], &Push::a([valid, 0.0, 0.0, 0.0]), 0);
+        let out = [&r.now[2], &r.now[3]];
+        self.ray_pass(p.lampshade, &out, &Push::a([0.0; 4]), 1);
+        if !t.wants.guides {
+            self.denoise(r, 2, false, true);
+            self.denoise(r, 3, false, false);
         }
     }
 

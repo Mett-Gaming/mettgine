@@ -16,6 +16,8 @@ pub const NORMAL: vk::Format = vk::Format::R16G16B16A16_SFLOAT;
 pub const MOTION: vk::Format = vk::Format::R16G16_SFLOAT;
 /// r = Verdeckung, g = Sonnenschatten aus Strahlen
 pub const AO: vk::Format = vk::Format::R8G8_UNORM;
+/// gewaehlte Lampe je Bildpunkt (siehe `_rt_lamps.wgsl`)
+pub const PICKS: vk::Format = vk::Format::R32G32B32A32_UINT;
 /// Farbe ohne Licht, Anteil der Spiegelung
 pub const GUIDE: vk::Format = vk::Format::R8G8B8A8_UNORM;
 /// Stellen ohne verlaessliche Bewegung
@@ -46,6 +48,8 @@ pub struct Wants {
     pub guides: bool,
     /// Strahlen: Streulicht, Spiegelung oder Pathtracing
     pub rays: bool,
+    /// … dazu Lampenlicht
+    pub ray_lamps: bool,
 }
 
 impl Wants {
@@ -79,8 +83,9 @@ impl Wants {
             taa: !vendor && f.anti_alias == AntiAlias::Taa,
             fxaa: (!vendor && f.anti_alias == AntiAlias::Fxaa) || f.sharpen > 0.0,
             vendor,
-            guides: vendor && denoises && f.ray_reconstruction && rays,
-            rays,
+            guides: vendor && denoises && f.ray_reconstruction && (rays || f.ray_tracing.lamps),
+            rays: rays || f.ray_tracing.lamps,
+            ray_lamps: f.ray_tracing.lamps && f.path_tracing.is_none(),
         }
     }
 }
@@ -112,17 +117,21 @@ pub struct Targets {
 /// Bilder der Strahlen.
 pub struct RayTargets {
     /// frisch gerechnet, nach dem Entrauschen das Ergebnis (Streulicht, Spiegelung)
-    pub now: [GpuImage; 2],
+    ///
+    /// 0 = Streulicht, 1 = Spiegelung, 2 und 3 = Lampenlicht und ihr Glanz (nur wenn gewuenscht)
+    pub now: Vec<GpuImage>,
     /// Verlauf je Art, abwechselnd beschrieben
-    pub history: [[GpuImage; 2]; 2],
+    pub history: Vec<[GpuImage; 2]>,
+    /// gewaehlte Lampen, abwechselnd beschrieben
+    pub picks: Option<[GpuImage; 2]>,
     /// Zwischenbilder beim Glaetten
     pub temp: [GpuImage; 2],
 }
 
 impl RayTargets {
     fn all(&self) -> impl Iterator<Item = &GpuImage> {
-        let pairs = [&self.now, &self.history[0], &self.history[1], &self.temp];
-        pairs.into_iter().flatten()
+        let pairs = self.history.iter().chain(&self.picks).flatten();
+        self.now.iter().chain(&self.temp).chain(pairs)
     }
 }
 
@@ -175,9 +184,20 @@ impl Targets {
         let ldr = if w.fxaa { Some(full(ldr)?) } else { None };
         let mut color = |format| arena.image(ctx, &TexDesc::target(w.width, w.height, format));
         let rays = if w.rays {
+            let mut now = Vec::new();
+            let mut history = Vec::new();
+            for _ in 0..if w.ray_lamps { 4 } else { 2 } {
+                now.push(color(HDR)?);
+                history.push([color(HDR)?, color(HDR)?]);
+            }
             Some(RayTargets {
-                now: [color(HDR)?, color(HDR)?],
-                history: [[color(HDR)?, color(HDR)?], [color(HDR)?, color(HDR)?]],
+                now,
+                history,
+                picks: if w.ray_lamps {
+                    Some([color(PICKS)?, color(PICKS)?])
+                } else {
+                    None
+                },
                 temp: [color(HDR)?, color(HDR)?],
             })
         } else {

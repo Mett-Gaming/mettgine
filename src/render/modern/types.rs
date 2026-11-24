@@ -190,6 +190,8 @@ pub struct RayTracing {
     /// Licht, das von Flaechen abprallt
     pub indirect: bool,
     pub reflections: bool,
+    /// Licht aller Lampen mit Schatten aus Strahlen (ReSTIR); auch fuer sehr viele Lampen
+    pub lamps: bool,
 }
 
 impl RayTracing {
@@ -200,11 +202,13 @@ impl RayTracing {
             occlusion: true,
             indirect: true,
             reflections: true,
+            lamps: true,
         }
     }
 }
 
-/// Das ganze Bild aus Strahlen. Halbtransparentes und Partikel fehlen.
+/// Das ganze Bild aus Strahlen. Aufkleber, Halbtransparentes und Partikel werden darueber gezeichnet (nicht bei
+/// `accumulate`), in Spiegelungen fehlen sie.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PathTracing {
     pub bounces: u32,

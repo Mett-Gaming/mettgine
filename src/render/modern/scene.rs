@@ -384,16 +384,23 @@ impl Modern {
         barrier(d, cmd, (DEPTH_STAGES | out, frag | DEPTH_STAGES), &images);
     }
 
-    /// Beleuchtung ins HDR-Bild, danach Halbtransparentes und Partikel.
-    pub(super) unsafe fn record_lit(&self, i: &Inputs, s: &SceneInput) {
+    /// Beleuchtung ins HDR-Bild, danach Halbtransparentes und Partikel. `traced` = das Deckende
+    /// steht schon im (lesbaren) Bild, nur der Rest kommt dazu.
+    pub(super) unsafe fn record_lit(&self, i: &Inputs, s: &SceneInput, traced: bool) {
         let Some(t) = &self.targets else {
             return;
         };
         let (d, cmd) = (&i.ctx.device, i.cmd);
         let frag = vk::PipelineStageFlags::FRAGMENT_SHADER;
         let out = vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT;
-        barrier(d, cmd, (frag | out, out), &[color_target(t.hdr.image)]);
-        let colors = [color_att(t.hdr.view, vk::AttachmentLoadOp::CLEAR)];
+        let mut target = color_target(t.hdr.image);
+        let mut load = vk::AttachmentLoadOp::CLEAR;
+        if traced {
+            target.old_layout = vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL;
+            load = vk::AttachmentLoadOp::LOAD;
+        }
+        barrier(d, cmd, (frag | out, out), &[target]);
+        let colors = [color_att(t.hdr.view, load)];
         let layout = vk::ImageLayout::DEPTH_STENCIL_READ_ONLY_OPTIMAL;
         let depth = depth_att(t.depth.view, layout, vk::AttachmentLoadOp::LOAD)
             .store_op(vk::AttachmentStoreOp::NONE);
@@ -407,11 +414,13 @@ impl Modern {
         );
         set_viewport(d, cmd, i.extent);
         self.bind_frame(i, 1);
-        self.mark_blended(i, false);
-        self.draw(i, Stage::Opaque, self.batches(&self.views.camera));
-        d.cmd_bind_pipeline(cmd, GFX, self.pipes.sky);
-        self.bind_any_material(i);
-        d.cmd_draw(cmd, 3, 1, 0, 0);
+        if !traced {
+            self.mark_blended(i, false);
+            self.draw(i, Stage::Opaque, self.batches(&self.views.camera));
+            d.cmd_bind_pipeline(cmd, GFX, self.pipes.sky);
+            self.bind_any_material(i);
+            d.cmd_draw(cmd, 3, 1, 0, 0);
+        }
         if let Some(opaque) = &t.opaque {
             d.cmd_end_rendering(cmd);
             copy_scene(d, cmd, t.hdr.image, opaque.image, i.extent);

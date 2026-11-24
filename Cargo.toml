@@ -1,6 +1,6 @@
 [package]
 name = "mettgine"
-version = "0.13.1"
+version = "0.14.0"
 edition = "2021"
 description = "Mettgine - Engine der Mett-Gaming-Spiele (Vulkan, Animation, Absturzberichte)"
 

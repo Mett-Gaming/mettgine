@@ -21,6 +21,7 @@ struct Scene {
     screen: vec4<f32>,           // Breite, Hoehe, 1/Breite, 1/Hoehe
     rt: vec4<f32>,               // Strahlen: x = Sonne, y = Streulicht, z = Spiegelung, w = Bildnummer
     counts: vec4<f32>,           // x = Lampen, y = Sonnenradius, z = Reichweite der Verdeckung, w = Staerke
+    more: vec4<f32>,             // x = 1: Lampenlicht aus Strahlen
     tiles: array<Tile, 64>,
 };
 
@@ -68,4 +69,6 @@ struct Mat {
 @group(0) @binding(14) var<storage, read> order: array<u32>;
 @group(0) @binding(15) var gi_tex: texture_2d<f32>;
 @group(0) @binding(16) var refl_tex: texture_2d<f32>;
+@group(0) @binding(17) var lamp_tex: texture_2d<f32>;
+@group(0) @binding(18) var gloss_tex: texture_2d<f32>;
 

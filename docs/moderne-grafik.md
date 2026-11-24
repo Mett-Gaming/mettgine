@@ -47,7 +47,9 @@ Entrauscht wird mit eigenen Durchgängen: über mehrere Bilder mitteln (`p_accum
 
 **Grenzen:**
 - Höchstens 128 animierte Figuren je Bild sind für Strahlen sichtbar; sie werden jedes Bild auf der Karte ausgerechnet.
-- Halbtransparentes und Partikel fehlen im Pathtracing.
+- Aufkleber, Halbtransparentes und Partikel werden im Pathtracing darübergezeichnet (außer beim Mitteln von Standbildern), in Spiegelungen fehlen sie.
+- `ray_tracing.lamps` beleuchtet aus allen Lampen mit Schatten aus Strahlen (ReSTIR: Kandidaten, letztes Bild, Nachbarn); ein Gehäuse bis 25 cm um die Lampe wirft keinen Schatten.
+- Nicht eingebaut: Opacity Micromaps (naga 24 kann nur Strahlabfragen ohne Rückfragen, und die Spiele haben kaum Blattwerk), ReSTIR für Streulicht, Hit-Positionen vom Treiber.
 - Strahlen sehen höchstens 512 Farbtexturen; Normalenkarten und Rauheitskarten getroffener Flächen zählen nicht.
 - Bei schnellen Bewegungen ziehen Streulicht und Spiegelungen kurz nach.
 

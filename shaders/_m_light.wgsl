@@ -208,7 +208,13 @@ fn lit(in: VsOut, front: bool) -> vec4<f32> {
             col = col + b * s.sun_color.rgb * sun_ray * sun_visibility(in.world, normalize(in.normal) * select(-1.0, 1.0, front), frag);
         }
     }
-    col = col + lamps_at(f, in.world, frag);
+    if (solid && s.more.x > 0.5) {
+        let q = vec2<i32>(frag);
+        let fres = env_brdf(f.f0, f.rough, max(dot(f.n, f.v), 0.0001));
+        col = col + textureLoad(lamp_tex, q, 0).rgb * f.albedo * (vec3<f32>(1.0) - f.f0) + textureLoad(gloss_tex, q, 0).rgb * max(fres, f.f0 * 0.5);
+    } else {
+        col = col + lamps_at(f, in.world, frag);
+    }
     let ndv = max(dot(f.n, f.v), 0.0001);
     let env = env_brdf(f.f0, f.rough, ndv);
     let r = reflect(-f.v, f.n);

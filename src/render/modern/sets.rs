@@ -17,9 +17,9 @@ const IMAGE: vk::DescriptorType = vk::DescriptorType::SAMPLED_IMAGE;
 const SAMPLER: vk::DescriptorType = vk::DescriptorType::SAMPLER;
 
 /// Arten der Bindings von Set 0
-pub const FRAME: [vk::DescriptorType; 17] = [
+pub const FRAME: [vk::DescriptorType; 19] = [
     STORAGE, STORAGE, UNIFORM, STORAGE, STORAGE, STORAGE, STORAGE, IMAGE, IMAGE, SAMPLER, IMAGE,
-    SAMPLER, IMAGE, IMAGE, STORAGE, IMAGE, IMAGE,
+    SAMPLER, IMAGE, IMAGE, STORAGE, IMAGE, IMAGE, IMAGE, IMAGE,
 ];
 const MATERIAL: [vk::DescriptorType; 6] = [IMAGE, IMAGE, IMAGE, IMAGE, IMAGE, SAMPLER];
 const POST: [vk::DescriptorType; 6] = [IMAGE, IMAGE, IMAGE, IMAGE, SAMPLER, SAMPLER];
@@ -238,7 +238,7 @@ impl Sets {
         ctx: &Context,
         set: vk::DescriptorSet,
         buffers: [&Buffer; 8],
-        images: [vk::ImageView; 7],
+        images: [vk::ImageView; 9],
         depth_layout: vk::ImageLayout,
     ) {
         let buf = buffers.map(|b| {
@@ -266,8 +266,7 @@ impl Sets {
                     12 => w.image_info(&img[3]),
                     13 => w.image_info(&img[4]),
                     14 => w.buffer_info(&buf[7]),
-                    15 => w.image_info(&img[5]),
-                    _ => w.image_info(&img[6]),
+                    _ => w.image_info(&img[b - 10]),
                 }
             })
             .collect();

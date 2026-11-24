@@ -3,7 +3,8 @@
 //!
 //! Set 1 der Strahlen-Shader: 0 = Szene, 1 = Dreiecke, 2 = Objekte, 3 = Tiefe, 4 = Normale und
 //! Rauheit, 5 = Farbtexturen (Feld), 6 = Sampler,
-//! 7 = Dreiecke der Figuren (`figures`).
+//! 7 = Dreiecke der Figuren (`figures`),
+//! 8 = gewaehlte Lampen (je Bild zwei Sets: letztes und dieses Bild), 9 = Bewegung.
 
 mod accel;
 mod figures;
@@ -82,7 +83,8 @@ pub struct Rt {
     frame: u64,
     pub layout: vk::DescriptorSetLayout,
     pool: vk::DescriptorPool,
-    pub sets: Vec<vk::DescriptorSet>,
+    /// je Bild im Flug: gewaehlte Lampen des letzten, dieses Bildes
+    pub sets: Vec<[vk::DescriptorSet; 2]>,
     sampler: vk::Sampler,
     /// Objekte in der Szene des letzten Bildes
     pub count: u32,
@@ -92,7 +94,7 @@ const ACCEL: vk::DescriptorType = vk::DescriptorType::ACCELERATION_STRUCTURE_KHR
 const STORAGE: vk::DescriptorType = vk::DescriptorType::STORAGE_BUFFER;
 const IMAGE: vk::DescriptorType = vk::DescriptorType::SAMPLED_IMAGE;
 const SAMPLER: vk::DescriptorType = vk::DescriptorType::SAMPLER;
-const BINDINGS: [(vk::DescriptorType, u32); 8] = [
+const BINDINGS: [(vk::DescriptorType, u32); 10] = [
     (ACCEL, 1),
     (STORAGE, 1),
     (STORAGE, 1),
@@ -101,7 +103,18 @@ const BINDINGS: [(vk::DescriptorType, u32); 8] = [
     (IMAGE, MAX_TEXTURES as u32),
     (SAMPLER, 1),
     (STORAGE, 1),
+    (IMAGE, 1),
+    (IMAGE, 1),
 ];
+
+/// Bilder, die Strahlen lesen.
+pub struct Views {
+    pub depth: vk::ImageView,
+    pub normal: vk::ImageView,
+    pub motion: vk::ImageView,
+    /// gewaehlte Lampen: letztes Bild, dieses Bild
+    pub picks: Option<[vk::ImageView; 2]>,
+}
 
 impl Rt {
     /// `None`, wenn Raytracing nicht eingeschaltet ist.
@@ -142,7 +155,7 @@ impl Rt {
                     .push_next(&mut extra),
                 None,
             )?;
-            let n = FRAMES_IN_FLIGHT as u32;
+            let n = FRAMES_IN_FLIGHT as u32 * 2;
             let sizes = BINDINGS.map(|(ty, count)| vk::DescriptorPoolSize {
                 ty,
                 descriptor_count: count * n,
@@ -153,7 +166,7 @@ impl Rt {
                     .pool_sizes(&sizes),
                 None,
             )?;
-            let layouts = vec![layout; FRAMES_IN_FLIGHT];
+            let layouts = vec![layout; n as usize];
             let sets = d.allocate_descriptor_sets(
                 &vk::DescriptorSetAllocateInfo::default()
                     .descriptor_pool(pool)
@@ -179,7 +192,7 @@ impl Rt {
                 frame: 0,
                 layout,
                 pool,
-                sets,
+                sets: sets.chunks(2).map(|s| [s[0], s[1]]).collect(),
                 sampler,
                 count: 0,
             }))
@@ -231,7 +244,7 @@ impl Rt {
         store: &mut Store,
         lists: &Lists,
         source: Source,
-        (depth, normal): (vk::ImageView, vk::ImageView),
+        views: &Views,
     ) -> Result<()> {
         self.begin_frame(ctx, &mut store.arena);
         self.build_models(ctx, cmd, store)?;
@@ -244,7 +257,9 @@ impl Rt {
         let items = lists.rt_items();
         self.fill(ctx, fi, lists, &items)?;
         self.build_scene(ctx, cmd, fi, &mut store.arena)?;
-        self.write_set(ctx, fi, store, depth, normal);
+        for k in 0..2 {
+            self.write_set(ctx, (fi, k), store, views);
+        }
         Ok(())
     }
 
@@ -374,19 +389,12 @@ impl Rt {
         Ok(())
     }
 
-    fn write_set(
-        &self,
-        ctx: &Context,
-        fi: usize,
-        store: &Store,
-        depth: vk::ImageView,
-        normal: vk::ImageView,
-    ) {
+    fn write_set(&self, ctx: &Context, (fi, k): (usize, usize), store: &Store, views: &Views) {
         let t = &self.tlas[fi];
         let (Some(accel), Some(infos)) = (&t.accel, &t.infos) else {
             return;
         };
-        let set = self.sets[fi];
+        let set = self.sets[fi][k];
         let w = |b: u32| {
             vk::WriteDescriptorSet::default()
                 .dst_set(set)
@@ -409,8 +417,14 @@ impl Rt {
                 .image_view(view)
                 .image_layout(layout)]
         };
-        let depth = image(depth, vk::ImageLayout::DEPTH_STENCIL_READ_ONLY_OPTIMAL);
-        let normal = image(normal, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+        let depth = image(
+            views.depth,
+            vk::ImageLayout::DEPTH_STENCIL_READ_ONLY_OPTIMAL,
+        );
+        let read = vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL;
+        let normal = image(views.normal, read);
+        let motion = image(views.motion, read);
+        let picks = views.picks.map(|p| image(p[k], read));
         let sampler = [vk::DescriptorImageInfo::default().sampler(self.sampler)];
         let textures: Vec<_> = store
             .ray_textures()
@@ -424,7 +438,11 @@ impl Rt {
             w(4).image_info(&normal),
             w(6).image_info(&sampler),
             w(7).buffer_info(&figures),
+            w(9).image_info(&motion),
         ];
+        if let Some(p) = &picks {
+            writes.push(w(8).image_info(p));
+        }
         if !textures.is_empty() {
             writes.push(w(5).image_info(&textures));
         }

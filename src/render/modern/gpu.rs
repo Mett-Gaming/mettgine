@@ -60,6 +60,8 @@ pub struct GpuScene {
     pub rt: [f32; 4],
     /// Lampen, Sonnenradius, Reichweite und Staerke der Verdeckung
     pub counts: [f32; 4],
+    /// Lampenlicht aus Strahlen, -, -, -
+    pub more: [f32; 4],
     pub tiles: [GpuTile; TILES],
 }
 
@@ -192,6 +194,7 @@ impl GpuScene {
             on(ray.reflections),
             (x.number % 4096) as f32,
         ];
+        g.more[0] = on(ray.lamps);
         let ssao = s.features.ssao.unwrap_or_default();
         g.counts = [x.lamps as f32, SUN_RADIUS, ssao.radius, ssao.strength];
         g.misc[1] = on(s.features.ssao.is_some() || ray.occlusion);
