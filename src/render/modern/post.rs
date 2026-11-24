@@ -2,9 +2,10 @@
 
 use super::super::frame::area;
 use super::super::transfer::set_viewport;
+use super::super::UiImage;
 use super::memory::GpuImage;
 use super::scene::{barrier, color_read, color_target};
-use super::sets::POST_SETS;
+use super::sets::{IMAGE_SETS, POST_SETS};
 use super::targets::Targets;
 use super::types::*;
 use super::{Inputs, Modern};
@@ -49,6 +50,45 @@ pub(super) struct Post<'a> {
     s: &'a SceneInput<'a>,
     /// so viele Sets sind in diesem Bild schon vergeben
     pub used: usize,
+}
+
+/// Bilder der Oberflaeche aufs Fenster (Teil eines laufenden Durchgangs).
+///
+/// # Safety
+/// `cmd` zeichnet gerade aufs Fenster, die GPU ist mit Bild `fi` fertig.
+pub(crate) unsafe fn record_images(
+    m: &Modern,
+    d: &ash::Device,
+    (cmd, fi): (vk::CommandBuffer, usize),
+    area: (f32, f32),
+    images: &[UiImage],
+) {
+    let gfx = vk::PipelineBindPoint::GRAPHICS;
+    let layout = m.pipes.post_layout;
+    for (k, image) in images.iter().take(IMAGE_SETS).enumerate() {
+        let Some(t) = m.store.texture(image.texture) else {
+            continue;
+        };
+        let set = m.sets.post[fi][POST_SETS + k];
+        m.sets.write_post(d, set, [t.view; 4], None);
+        d.cmd_bind_pipeline(cmd, gfx, m.pipes.image);
+        d.cmd_bind_descriptor_sets(cmd, gfx, layout, 0, &[set], &[]);
+        let push = Push {
+            a: image.rect,
+            b: image.uv,
+            c: image.color,
+            d: [area.0, area.1, 0.0, 0.0],
+            ..bytemuck::Zeroable::zeroed()
+        };
+        d.cmd_push_constants(
+            cmd,
+            layout,
+            vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
+            0,
+            bytemuck::bytes_of(&push),
+        );
+        d.cmd_draw(cmd, 6, 1, 0, 0);
+    }
 }
 
 impl<'a> Post<'a> {

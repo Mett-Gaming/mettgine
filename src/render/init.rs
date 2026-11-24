@@ -225,6 +225,8 @@ impl Renderer {
                 box_count: 0,
                 light_count: 0,
                 static_groups: Vec::new(),
+                boxes: Vec::new(),
+                statics: Vec::new(),
                 swapchain,
                 color,
                 depth,

@@ -15,7 +15,8 @@ pub struct ParticleInst {
     pub size: f32,
     /// rgb, a = Deckkraft
     pub color: [f32; 4],
-    /// x = Drehung (Radiant), y = Aufhellen statt Abdecken (0..1), z = Randweichheit (0..1)
+    /// x = Drehung (Radiant), y = Aufhellen statt Abdecken (0..1), z = Randweichheit (0..1),
+    /// w = Feld im Bild-Atlas der modernen Grafik (0 = keins, 1 = erstes)
     pub extra: [f32; 4],
 }
 

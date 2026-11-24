@@ -39,7 +39,7 @@ mod screen;
 mod tests;
 mod world;
 
-pub use modern::*;
+pub use modern::{MAX_UI_IMAGES, *};
 pub use params::*;
 pub use pipelines::WorldShaders;
 
@@ -209,6 +209,9 @@ pub struct Renderer {
     light_count: u32,
     static_buf: Buffer,
     static_groups: Vec<Group>,
+    /// dieselben Daten fuer die moderne Grafik
+    boxes: Vec<crate::gpu::GpuInstance>,
+    statics: Vec<MeshDraw>,
     inst_bufs: Vec<Buffer>,
     bone_bufs: Vec<Buffer>,
     globals_bufs: Vec<Buffer>,

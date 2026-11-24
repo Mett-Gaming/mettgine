@@ -1,6 +1,6 @@
 //! Was ein Spiel uebergibt: beim Aufbau ([`Config`]) und pro Bild ([`FrameInput`]).
 
-use super::{SceneInput, UiVertex, WorldShaders, SHADOW_SIZE};
+use super::{SceneInput, TextureId, UiVertex, WorldShaders, SHADOW_SIZE};
 use crate::gpu::{MeshData, SkinData};
 use glam::{Mat4, Vec2, Vec3, Vec4};
 
@@ -236,6 +236,31 @@ pub enum Post {
     Plain(f32),
 }
 
+/// Ein Bild in der Oberflaeche (Logo, Symbol, Hintergrund).
+#[derive(Clone, Copy, Debug)]
+pub struct UiImage {
+    /// Farbtextur ([`super::Renderer::add_texture`])
+    pub texture: TextureId,
+    /// x, y, Breite, Hoehe in Einheiten der virtuellen Flaeche
+    pub rect: [f32; 4],
+    /// Ausschnitt: links, oben, rechts, unten (0..1)
+    pub uv: [f32; 4],
+    /// Farbmultiplikator
+    pub color: [f32; 4],
+}
+
+impl UiImage {
+    /// Ganzes Bild, unveraenderte Farbe.
+    pub fn new(texture: TextureId, rect: [f32; 4]) -> Self {
+        Self {
+            texture,
+            rect,
+            uv: [0.0, 0.0, 1.0, 1.0],
+            color: [1.0; 4],
+        }
+    }
+}
+
 /// Ein Bild.
 #[derive(Clone, Copy)]
 pub struct FrameInput<'a> {
@@ -256,6 +281,8 @@ pub struct FrameInput<'a> {
     pub bones: &'a [Mat4],
     /// Dreiecke in Einheiten der virtuellen Flaeche ([`Config::ui`])
     pub ui: &'a [UiVertex],
+    /// Bilder unter der uebrigen Oberflaeche (hoechstens [`super::MAX_UI_IMAGES`]), in dieser Reihenfolge
+    pub images: &'a [UiImage],
     /// moderne Grafik; ersetzt `view` und `lighting`. None (Vorgabe) = einfache Grafik
     pub scene: Option<&'a SceneInput<'a>>,
 }
@@ -306,6 +333,7 @@ impl Default for FrameInput<'_> {
             camera_skins: &[],
             bones: &[],
             ui: &[],
+            images: &[],
             scene: None,
         }
     }

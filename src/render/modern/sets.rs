@@ -26,7 +26,10 @@ const POST: [vk::DescriptorType; 6] = [IMAGE, IMAGE, IMAGE, IMAGE, SAMPLER, SAMP
 /// Sets je Pool fuer Materialien
 const CHUNK: u32 = 256;
 /// Sets der Nachbearbeitung je Bild im Flug
-pub const POST_SETS: usize = 48;
+pub const POST_SETS: usize = 32;
+/// danach Sets fuer Bilder der Oberflaeche
+pub const IMAGE_SETS: usize = 64;
+const ALL_SETS: usize = POST_SETS + IMAGE_SETS;
 
 unsafe fn layout(d: &ash::Device, types: &[vk::DescriptorType]) -> Result<vk::DescriptorSetLayout> {
     let bindings: Vec<_> = types
@@ -206,17 +209,17 @@ impl Sets {
             let frame_layout = layout(d, &FRAME)?;
             let post_layout = layout(d, &POST)?;
             let pool_ = pool(d, &FRAME, frames as u32 * 3, Default::default())?;
-            let count = (frames * POST_SETS) as u32;
+            let count = (frames * ALL_SETS) as u32;
             let post_pool = pool(d, &POST, count, Default::default())?;
             let all = alloc(d, pool_, frame_layout, frames * 3)?;
-            let post = alloc(d, post_pool, post_layout, frames * POST_SETS)?;
+            let post = alloc(d, post_pool, post_layout, frames * ALL_SETS)?;
             Ok(Self {
                 frame_layout,
                 post_layout,
                 pool: pool_,
                 post_pool,
                 frames: all.chunks(3).map(|c| [c[0], c[1], c[2]]).collect(),
-                post: post.chunks(POST_SETS).map(<[_]>::to_vec).collect(),
+                post: post.chunks(ALL_SETS).map(<[_]>::to_vec).collect(),
                 linear: d.create_sampler(&base(vk::Filter::LINEAR), None)?,
                 nearest: d.create_sampler(&base(vk::Filter::NEAREST), None)?,
                 compare: d.create_sampler(

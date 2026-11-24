@@ -126,6 +126,8 @@ pub struct Pipes {
     pub sky: vk::Pipeline,
     pub particle: vk::Pipeline,
     pub post: PostPipes,
+    /// Bilder der Oberflaeche
+    pub image: vk::Pipeline,
 }
 
 unsafe fn pipeline_layout(
@@ -225,6 +227,7 @@ impl Pipes {
         frame: vk::DescriptorSetLayout,
         material: vk::DescriptorSetLayout,
         post: vk::DescriptorSetLayout,
+        swapchain: vk::Format,
     ) -> Result<Self> {
         let d = &ctx.device;
         // SAFETY: gueltiges Geraet; freigegeben in `destroy`.
@@ -261,6 +264,18 @@ impl Pipes {
                 sky: create_pipeline(d, layout, &sky)?,
                 particle: create_pipeline(d, layout, &particle)?,
                 post: post_pipes(d, post_layout)?,
+                image: create_pipeline(
+                    d,
+                    post_layout,
+                    &screen_desc(
+                        spv!("p_image.vert"),
+                        spv!("p_image.frag"),
+                        swapchain,
+                        Blend::Alpha,
+                        &[],
+                        &[],
+                    ),
+                )?,
             })
         }
     }
@@ -292,6 +307,7 @@ impl Pipes {
         ] {
             d.destroy_pipeline(p, None);
         }
+        d.destroy_pipeline(self.image, None);
         d.destroy_pipeline_layout(self.layout, None);
         d.destroy_pipeline_layout(self.post_layout, None);
     }

@@ -11,7 +11,11 @@ impl Renderer {
     ) -> Result<T> {
         let mut m = match self.modern.take() {
             Some(m) => m,
-            None => Box::new(modern::Modern::new(&self.ctx, self.command_pool)?),
+            None => Box::new(modern::Modern::new(
+                &self.ctx,
+                self.command_pool,
+                self.swapchain.format,
+            )?),
         };
         let result = f(&mut m, &self.ctx);
         self.modern = Some(m);

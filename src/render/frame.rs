@@ -103,6 +103,9 @@ impl Renderer {
         if let Some(scene) = f.scene {
             self.record_modern(cmd, fi, f, scene, n)?;
         } else {
+            if let Some(m) = &mut self.modern {
+                m.upload_only(&self.ctx, cmd);
+            }
             if let Lighting::Sun(sun) = &f.lighting {
                 self.record_shadow(cmd, fi, sun, n);
                 self.timer.mark(d, cmd, fi, "Schatten");
@@ -148,6 +151,8 @@ impl Renderer {
             skin_ranges: &self.skin_ranges,
             mesh_bounds: &self.mesh_bounds,
             skin_bounds: &self.skin_bounds,
+            boxes: &self.boxes,
+            statics: &self.statics,
         };
         let timer = &self.timer;
         let d = &self.ctx.device;

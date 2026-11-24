@@ -205,7 +205,7 @@ impl Renderer {
             self.timer.collect(&self.ctx.device, fi, &mut self.stats);
             let start = Instant::now();
             if f.scene.is_some() && self.modern.is_none() {
-                let m = modern::Modern::new(&self.ctx, self.command_pool)?;
+                let m = modern::Modern::new(&self.ctx, self.command_pool, self.swapchain.format)?;
                 self.modern = Some(Box::new(m));
             }
             // moderne Grafik: Modelle und Figuren laufen ueber ihre eigenen Listen

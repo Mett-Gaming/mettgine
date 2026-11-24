@@ -77,7 +77,7 @@ fn input(s: &Shot) -> FrameInput<'_> {
         camera_skins: &[],
         bones: &s.bones,
         ui: &s.ui,
-        scene: None,
+        ..Default::default()
     }
 }
 

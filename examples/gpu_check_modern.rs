@@ -72,6 +72,7 @@ fn grid() -> TextureData {
 struct World {
     objects: Vec<ObjectDraw>,
     lights: Vec<Light>,
+    logo: TextureId,
     meshes: Vec<MeshDraw>,
 }
 
@@ -178,6 +179,7 @@ fn build(r: &mut Renderer) -> Result<World> {
         });
     }
     Ok(World {
+        logo: color,
         objects,
         lights,
         meshes: vec![
@@ -299,6 +301,7 @@ fn shot(r: &mut Renderer, w: &World, c: &Case, frame: u32, path: Option<&Path>) 
         time: frame as f32 / 60.0,
         meshes: &w.meshes,
         post: Post::Plain(0.0),
+        images: &[UiImage::new(w.logo, [20.0, 20.0, 90.0, 90.0])],
         scene: Some(&scene),
         ..Default::default()
     })

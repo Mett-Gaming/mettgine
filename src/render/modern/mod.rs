@@ -27,13 +27,19 @@ mod store;
 mod targets;
 mod types;
 
+pub(crate) use post::record_images;
+
+/// Bilder der Oberflaeche je Bild
+pub const MAX_UI_IMAGES: usize = sets::IMAGE_SETS;
+
 pub use model::*;
 pub use types::*;
 
 use super::context::Context;
 use super::util::Buffer;
-use super::{FrameInput, Result, FRAMES_IN_FLIGHT};
+use super::{FrameInput, MeshDraw, Result, FRAMES_IN_FLIGHT};
 use crate::cull::{SkinBounds, Sphere};
+use crate::gpu::GpuInstance;
 use ash::vk;
 use cascades::Cascade;
 use glam::{Mat4, Vec2};
@@ -108,6 +114,8 @@ pub(crate) struct Modern {
     views: Views,
     tiles: Vec<atlas::Tile>,
     plain_material: MaterialId,
+    /// Einheitswuerfel fuer die Welt-Boxen
+    cube: ModelId,
     /// laufende Bildnummer
     number: u64,
     prev_view_proj: Option<Mat4>,
@@ -136,14 +144,23 @@ pub(crate) struct Inputs<'a> {
     pub skin_ranges: &'a [(u32, u32)],
     pub mesh_bounds: &'a [Sphere],
     pub skin_bounds: &'a [SkinBounds],
+    pub boxes: &'a [GpuInstance],
+    pub statics: &'a [MeshDraw],
 }
 
 impl Modern {
-    pub fn new(ctx: &Context, pool: vk::CommandPool) -> Result<Self> {
+    pub fn new(ctx: &Context, pool: vk::CommandPool, swapchain: vk::Format) -> Result<Self> {
         let mut store = Store::new(ctx)?;
         let plain_material = store.add_material(ctx, &Material::default())?;
+        let cube = store.add_model(ctx, &ModelData::from_mesh(&crate::shapes::cube()))?;
         let sets = sets::Sets::new(ctx, FRAMES_IN_FLIGHT)?;
-        let pipes = pipes::Pipes::new(ctx, sets.frame_layout, store.sets.layout, sets.post_layout)?;
+        let pipes = pipes::Pipes::new(
+            ctx,
+            sets.frame_layout,
+            store.sets.layout,
+            sets.post_layout,
+            swapchain,
+        )?;
         let fixed = Fixed::new(ctx, pool, &mut store.arena)?;
         Ok(Self {
             frames: (0..FRAMES_IN_FLIGHT)
@@ -159,6 +176,7 @@ impl Modern {
             views: Views::default(),
             tiles: Vec::new(),
             plain_material,
+            cube,
             number: 0,
             prev_view_proj: None,
             history_valid: false,
@@ -200,6 +218,9 @@ impl Modern {
             mesh_bounds: i.mesh_bounds,
             skin_bounds: i.skin_bounds,
             material: self.plain_material.0,
+            boxes: i.boxes,
+            cube: self.cube.0,
+            statics: i.statics,
         };
         self.lists.collect(f, s, &self.store, &plain);
         let cascades = self.sun_views(s);
@@ -353,7 +374,7 @@ impl Modern {
         let mut post = post::Post::new(self, i, s);
         post.ssao();
         mark("Verdeckung");
-        self.record_lit(i);
+        self.record_lit(i, s);
         mark("Beleuchtung");
         let used = post.used;
         let mut post = post::Post::new(self, i, s);
@@ -364,6 +385,17 @@ impl Modern {
         self.ping ^= 1;
         self.number += 1;
         Ok(())
+    }
+
+    /// Anfang eines Bildes ohne moderne Szene: nur Nachgeladenes kopieren.
+    ///
+    /// # Safety
+    /// `cmd` muss aufgenommen werden, ausserhalb eines Durchgangs.
+    pub unsafe fn upload_only(&mut self, ctx: &Context, cmd: vk::CommandBuffer) {
+        self.store.begin_frame(ctx, cmd);
+        // die naechste moderne Szene beginnt ohne Verlauf
+        self.history_valid = false;
+        self.prev_view_proj = None;
     }
 
     fn batches(&self, r: &Range<usize>) -> &[Batch] {

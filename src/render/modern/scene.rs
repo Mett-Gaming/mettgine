@@ -4,7 +4,7 @@ use super::super::frame::{area, depth_clear};
 use super::super::transfer::set_viewport;
 use super::super::util::image_barrier;
 use super::prepare::{Batch, Kind};
-use super::{Inputs, Modern};
+use super::{Inputs, Modern, SceneInput};
 use ash::vk;
 use glam::Mat4;
 
@@ -319,7 +319,7 @@ impl Modern {
     }
 
     /// Beleuchtung ins HDR-Bild, danach Halbtransparentes und Partikel.
-    pub(super) unsafe fn record_lit(&self, i: &Inputs) {
+    pub(super) unsafe fn record_lit(&self, i: &Inputs, s: &SceneInput) {
         let Some(t) = &self.targets else {
             return;
         };
@@ -351,6 +351,17 @@ impl Modern {
         if count > 0 {
             d.cmd_bind_pipeline(cmd, GFX, self.pipes.particle);
             self.bind_any_material(i);
+            let mut grid = [0.0f32; 16];
+            if let Some((id, columns, rows)) = s.particle_atlas {
+                if let Some(m) = self.store.material(id) {
+                    (grid[0], grid[1]) = (columns as f32, rows as f32);
+                    let sets = [m.set];
+                    d.cmd_bind_descriptor_sets(cmd, GFX, self.pipes.layout, 1, &sets, &[]);
+                }
+            }
+            let stages = vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT;
+            let bytes = bytemuck::cast_slice(&grid);
+            d.cmd_push_constants(cmd, self.pipes.layout, stages, 0, bytes);
             d.cmd_bind_vertex_buffers(cmd, 0, &[particles], &[0]);
             d.cmd_draw(cmd, 6, count, 0, 0);
         }

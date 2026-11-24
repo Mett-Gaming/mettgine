@@ -9,6 +9,7 @@ impl Renderer {
         self.wait_idle()?;
         fill(&self.ctx, &mut self.box_buf, bytemuck::cast_slice(boxes))?;
         fill(&self.ctx, &mut self.light_buf, bytemuck::cast_slice(lights))?;
+        self.boxes = boxes.to_vec();
         self.box_count = boxes.len() as u32;
         self.light_count = lights.len() as u32;
         self.write_all_descriptors();
@@ -39,6 +40,7 @@ impl Renderer {
             &mut self.static_buf,
             bytemuck::cast_slice(&insts),
         )?;
+        self.statics = statics.to_vec();
         self.static_groups = groups;
         self.write_all_descriptors();
         Ok(())

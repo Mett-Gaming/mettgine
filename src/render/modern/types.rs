@@ -239,6 +239,9 @@ pub struct SceneInput<'a> {
     pub features: Features,
     /// Rauheit der einfachen Modelle und Figuren
     pub plain_roughness: f32,
+    /// Bilder fuer Partikel: Material (nur seine Farbtextur zaehlt), Spalten, Zeilen. Welches Feld
+    /// ein Partikel zeigt, steht in `ParticleInst::extra[3]` (0 = keins, 1 = erstes)
+    pub particle_atlas: Option<(super::model::MaterialId, u32, u32)>,
     /// vergangene Zeit seit dem letzten Bild (Sekunden), fuer die Belichtung
     pub dt: f32,
     /// Kamerasprung: Verlauf (TAA, Belichtung) verwerfen
@@ -261,6 +264,7 @@ impl SceneInput<'_> {
             ambient: 1.0,
             features: Features::default(),
             plain_roughness: 0.75,
+            particle_atlas: None,
             dt: 1.0 / 60.0,
             cut: false,
         }

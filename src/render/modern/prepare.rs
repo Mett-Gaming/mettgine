@@ -6,12 +6,15 @@ use super::model::*;
 use super::store::Store;
 use super::types::*;
 use crate::cull::{Frustum, SkinBounds, Sphere};
-use crate::render::FrameInput;
-use glam::{Mat4, Vec3, Vec4};
+use crate::gpu::GpuInstance;
+use crate::render::{FrameInput, MeshDraw};
+use glam::{Mat4, Quat, Vec3, Vec4};
 use std::ops::Range;
 
 /// Deckkraft von Hologrammen (wie in der einfachen Grafik)
 const GHOST_ALPHA: f32 = 0.55;
+/// Material leuchtender Welt-Boxen (wie in `_world_base.wgsl`)
+const GLOWING_BOX: f32 = 3.0;
 /// Eigenleuchten einfacher Modelle: Faktor auf die Anzeigefarbe
 const PLAIN_GLOW: f32 = 1.5;
 
@@ -83,6 +86,11 @@ pub struct Plain<'a> {
     pub skin_bounds: &'a [SkinBounds],
     /// Material fuer alle einfachen Dinge
     pub material: u32,
+    /// Welt-Boxen und das Modell, mit dem sie gezeichnet werden
+    pub boxes: &'a [GpuInstance],
+    pub cube: u32,
+    /// feste Modelle
+    pub statics: &'a [MeshDraw],
 }
 
 impl Lists {
@@ -94,6 +102,7 @@ impl Lists {
         self.items.clear();
         (self.drawn, self.culled) = (0, 0);
         self.add_objects(s, store);
+        self.add_boxes(plain);
         self.add_meshes(f, plain);
         self.add_skins(f, plain);
         self.items.sort_unstable_by_key(|i| (i.blend, i.key, i.obj));
@@ -142,8 +151,40 @@ impl Lists {
         }
     }
 
+    /// Welt-Boxen ohne ihre eigenen Materialien: Farbe, Drehung, Leuchten.
+    fn add_boxes(&mut self, plain: &Plain) {
+        for b in plain.boxes {
+            let [x, y, z, yaw] = b.center;
+            let half = Vec3::new(b.half[0], b.half[1], b.half[2]);
+            let model = Mat4::from_scale_rotation_translation(
+                half * 2.0,
+                Quat::from_rotation_y(yaw),
+                Vec3::new(x, y, z),
+            );
+            let glows = b.extra[0] == GLOWING_BOX;
+            let glow = if glows { b.extra[2] } else { 0.0 };
+            let tint = Vec4::new(b.color[0], b.color[1], b.color[2], glow);
+            let key = Key {
+                kind: Kind::Object,
+                ..plain_key(Kind::Object, plain.material, plain.cube)
+            };
+            let sphere = Sphere {
+                center: Vec3::new(x, y, z),
+                radius: half.length(),
+            };
+            let item = Item {
+                key,
+                obj: 0,
+                sphere: Some(sphere),
+                shadow: !glows,
+                blend: false,
+            };
+            self.push(plain_obj(&model, tint, 0, 0.0, false, plain.material), item);
+        }
+    }
+
     fn add_meshes(&mut self, f: &FrameInput, plain: &Plain) {
-        let solid = f.meshes.iter().map(|m| (m, false));
+        let solid = plain.statics.iter().chain(f.meshes).map(|m| (m, false));
         let ghosts = f.ghosts.iter().map(|m| (m, true));
         for (m, ghost) in solid.chain(ghosts) {
             let Some(bounds) = plain.mesh_bounds.get(m.mesh) else {

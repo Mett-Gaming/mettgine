@@ -156,6 +156,9 @@ impl Renderer {
         self.bind_tex(cmd, pipe, self.desc.post);
         self.push(cmd, &values);
         d.cmd_draw(cmd, 3, 1, 0, 0);
+        if let Some(m) = self.modern.as_deref().filter(|_| !f.images.is_empty()) {
+            modern::record_images(m, d, (cmd, fi), self.ui_area(), f.images);
+        }
         if !layered {
             self.draw_ui(cmd, self.pipes.ui, fi, ui_count);
         }
