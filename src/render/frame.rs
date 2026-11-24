@@ -110,6 +110,12 @@ impl Renderer {
                 self.record_shadow(cmd, fi, sun, n);
                 self.timer.mark(d, cmd, fi, "Schatten");
             }
+            if self.lamp.cfg.count > 0 {
+                self.record_lamps(cmd, fi, f, n);
+                let d = &self.ctx.device;
+                self.timer.mark(d, cmd, fi, "Lampenschatten");
+            }
+            let d = &self.ctx.device;
             if self.second.enabled {
                 self.record_second(cmd, fi, f, n);
                 self.timer.mark(d, cmd, fi, "Zweite Kamera");
@@ -188,7 +194,7 @@ impl Renderer {
         d.cmd_bind_descriptor_sets(cmd, gfx, self.pipes.scene_layout, 0, &[set], &[]);
     }
 
-    unsafe fn draw_groups(&self, cmd: vk::CommandBuffer, gs: &[Group]) {
+    pub(super) unsafe fn draw_groups(&self, cmd: vk::CommandBuffer, gs: &[Group]) {
         let d = &self.ctx.device;
         d.cmd_bind_vertex_buffers(cmd, 0, &[self.mesh_vertex_buf.buffer], &[0]);
         for g in gs {
@@ -375,7 +381,11 @@ impl Renderer {
             .image_view(depth.view)
             .image_layout(vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL)
             .load_op(vk::AttachmentLoadOp::CLEAR)
-            .store_op(vk::AttachmentStoreOp::DONT_CARE)
+            .store_op(if self.contact_on(f) {
+                vk::AttachmentStoreOp::STORE
+            } else {
+                vk::AttachmentStoreOp::DONT_CARE
+            })
             .clear_value(depth_clear());
         d.cmd_begin_rendering(
             cmd,
@@ -420,6 +430,9 @@ impl Renderer {
         let groups = &self.lists.groups[..];
         let how = (Pass::Main, &self.pipes.scene, groups);
         self.draw_solid(cmd, fi, f, n, how);
+        if self.contact_on(f) {
+            self.darken_corners(cmd, fi);
+        }
         self.draw_blended(cmd, fi, n);
         self.ctx.device.cmd_end_rendering(cmd);
     }

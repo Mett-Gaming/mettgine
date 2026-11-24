@@ -13,6 +13,8 @@ impl Renderer {
         self.boxes = boxes.to_vec();
         self.box_count = boxes.len() as u32;
         self.light_count = lights.len() as u32;
+        self.lights = lights.to_vec();
+        self.lamp.lamps.world_changed();
         self.write_all_descriptors();
         Ok(())
     }
@@ -36,6 +38,7 @@ impl Renderer {
         )?;
         self.statics = statics.to_vec();
         self.static_runs = runs;
+        self.lamp.lamps.statics_changed();
         self.write_all_descriptors();
         Ok(())
     }

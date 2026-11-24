@@ -58,11 +58,22 @@ impl Runs {
     /// Sichtbare Stuecke nach `out`; benachbarte werden zu einem Zeichenbefehl. `grow` = so weit
     /// kann sich eine Instanz bewegen (Schwanken), `None` als Sichtfeld = alles.
     pub fn visible(&self, frustum: Option<&Frustum>, grow: f32, out: &mut Vec<Group>) {
+        self.keep(grow, out, |s| frustum.is_none_or(|f| f.sees(s)));
+    }
+
+    /// Stuecke in Reichweite einer Lampe und in ihrem Sichtfeld, sonst wie [`Runs::visible`].
+    pub fn lit(&self, lamp: &Sphere, frustum: &Frustum, grow: f32, out: &mut Vec<Group>) {
+        self.keep(grow, out, |s| {
+            s.center.distance(lamp.center) < s.radius + lamp.radius && frustum.sees(s)
+        });
+    }
+
+    fn keep(&self, grow: f32, out: &mut Vec<Group>, seen: impl Fn(&Sphere) -> bool) {
         out.clear();
         for r in &self.list {
             let mut s = r.sphere;
             s.radius += grow;
-            if frustum.is_some_and(|f| !f.sees(&s)) {
+            if !seen(&s) {
                 continue;
             }
             match out.last_mut() {
@@ -87,6 +98,26 @@ pub(super) struct VisibleRuns {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lamps_only_light_what_is_in_reach() {
+        let at = |x: f32| Sphere {
+            center: Vec3::new(x, 0.0, 0.0),
+            radius: 0.5,
+        };
+        // verschiedene Modelle: jedes ein eigenes Stueck
+        let runs = Runs::new((0..10).map(|i| (i, at(i as f32 * 3.0))));
+        let lamp = Sphere {
+            center: Vec3::new(0.0, 3.0, 0.0),
+            radius: 7.0,
+        };
+        let down = glam::Mat4::perspective_rh(2.6, 1.0, 0.1, 7.0)
+            * glam::Mat4::look_at_rh(lamp.center, Vec3::ZERO, Vec3::Z);
+        let mut out = Vec::new();
+        runs.lit(&lamp, &Frustum::new(&down), 0.0, &mut out);
+        let seen: Vec<u32> = out.iter().map(|g| g.mesh).collect();
+        assert_eq!(seen, vec![0, 1, 2]);
+    }
     use crate::render::perspective;
 
     fn sphere(x: f32, z: f32) -> Sphere {

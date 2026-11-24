@@ -115,6 +115,8 @@ let mut renderer = Renderer::new(&window, &Config::new(&meshes, &skins, font))?;
 renderer.draw(&FrameInput { view, lighting: Lighting::Sun(sun), post: Post::Clean(clean), /* … */ })?;
 ```
 
+**Lampenschatten** gelten für `Lighting::Rooms`: Jede Lampe wirft Schatten mit einem weiten Kegel nach unten, die stehende Welt wird nur bei Änderungen neu gezeichnet. Feste Modelle vor `upload_statics` nach Ort ordnen, dann sortiert die Engine besser aus. Wer eigene Welt-Shader baut, übersetzt sie mit dem neuen `_common.wgsl` neu (Bindings 10 bis 12).
+
 Neue Fähigkeiten kommen in diesen Renderer (`Config`, `FrameInput`, `Lighting`, `Post`), nie in einen zweiten.
 
 ### Zuschaltbares
@@ -124,6 +126,8 @@ Alles Sichtbare ist aus, bis das Spiel es einschaltet:
 ```rust
 renderer.set_msaa(4);              // Kantenglättung (1, 2, 4, 8)
 renderer.set_font_mipmaps(true);   // kleine Schrift ruhiger
+// Räume: Schatten von Deckenlampen und dunkle Ecken, auch mit eigenen Welt-Materialien
+renderer.set_lamp_shadows(LampShadows { count: 10, contact: 0.6, ..Default::default() })?;
 renderer.queue_particles(particles.instances(cam_pos)); // vor jedem draw
 
 // Messanzeige
@@ -140,6 +144,7 @@ Ob der Szenen-Renderer auf der eigenen Grafikkarte richtig zeichnet, prüft ohne
 ```powershell
 cargo run --release --example gpu_check
 cargo run --release --example gpu_check_modern <ordner>
+cargo run --release --example gpu_check_lamps <ordner>    # Lampenschatten, dunkle Ecken
 cargo run --release --example gpu_bench <ordner>          # dichte Bilder mit Bildzeit
 cargo run --release --example gpu_check_world <ordner>   # Vergleichsbilder vor/nach einem Umbau
 ```

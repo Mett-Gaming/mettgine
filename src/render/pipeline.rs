@@ -21,6 +21,8 @@ pub(crate) enum Blend {
     Premultiplied,
     /// dazuzaehlen (Ueberstrahlen)
     Add,
+    /// Bild mit der Farbe malnehmen (Verdunkeln)
+    Multiply,
 }
 
 impl Blend {
@@ -30,6 +32,7 @@ impl Blend {
             .color_write_mask(vk::ColorComponentFlags::RGBA);
         let (src, dst, src_a, dst_a) = match self {
             Blend::Opaque => return base,
+            Blend::Multiply => (F::ZERO, F::SRC_COLOR, F::ZERO, F::ONE),
             Blend::Add => (F::ONE, F::ONE, F::ONE, F::ONE),
             Blend::Alpha => (
                 F::SRC_ALPHA,

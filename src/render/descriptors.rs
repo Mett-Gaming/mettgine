@@ -2,7 +2,8 @@
 //!
 //! Set 0 der Szene: 0 = Instanzen, 1 = Knochen, 2 = [`Globals`], 3 = Schattenkarte,
 //! 4 = Vergleichs-Sampler, 5 = Lampen, 6 = Welt-Boxen, 7 = Schild-Atlas, 8 = weicher Sampler,
-//! 9 = Bild der zweiten Kamera. Je Bild im Flug gibt es ein Set pro Durchgang ([`Pass`]) und
+//! 9 = Bild der zweiten Kamera, 10 = Schatten-Atlas der Lampen, 11 = Schattenfelder,
+//! 12 = Tiefe der Szene. Je Bild im Flug gibt es ein Set pro Durchgang ([`Pass`]) und
 //! Instanz-Puffer (beweglich, fest).
 
 use super::*;
@@ -104,9 +105,10 @@ const STORAGE: vk::DescriptorType = vk::DescriptorType::STORAGE_BUFFER;
 const UNIFORM: vk::DescriptorType = vk::DescriptorType::UNIFORM_BUFFER;
 const IMAGE: vk::DescriptorType = vk::DescriptorType::SAMPLED_IMAGE;
 const SAMPLER: vk::DescriptorType = vk::DescriptorType::SAMPLER;
-/// Arten der Bindings 0..9 der Szene
-const SCENE: [vk::DescriptorType; 10] = [
-    STORAGE, STORAGE, UNIFORM, IMAGE, SAMPLER, STORAGE, STORAGE, IMAGE, SAMPLER, IMAGE,
+/// Arten der Bindings 0..12 der Szene
+const SCENE: [vk::DescriptorType; 13] = [
+    STORAGE, STORAGE, UNIFORM, IMAGE, SAMPLER, STORAGE, STORAGE, IMAGE, SAMPLER, IMAGE, IMAGE,
+    STORAGE, IMAGE,
 ];
 /// Bindings 0..2 von Nachbearbeitung und UI: Bild, Sampler, zweites Bild
 const TEX: [vk::DescriptorType; 3] = [IMAGE, SAMPLER, IMAGE];
@@ -215,6 +217,16 @@ impl Renderer {
                 Pass::Second => self.signs.view,
                 _ => self.second.color.view,
             });
+            let lamp_atlas = image_info(match pass {
+                Pass::Shadow => self.dummy_shadow.view,
+                _ => self.lamp.atlas.view,
+            });
+            // mehrfach abgetastete Tiefe passt nicht auf das Binding
+            let depth = image_info(match pass {
+                Pass::Main if self.ms_color.is_none() => self.depth.view,
+                _ => self.dummy_shadow.view,
+            });
+            let lamp_tiles = buffer_info(&self.lamp_bufs[fi]);
             for (kind, insts) in [&self.inst_bufs[fi], &self.static_buf].iter().enumerate() {
                 let insts = buffer_info(insts);
                 let w = |b: usize| {
@@ -234,6 +246,9 @@ impl Renderer {
                     w(7).image_info(&signs),
                     w(8).image_info(&linear),
                     w(9).image_info(&camera),
+                    w(10).image_info(&lamp_atlas),
+                    w(11).buffer_info(&lamp_tiles),
+                    w(12).image_info(&depth),
                 ];
                 // SAFETY: Sets und Ressourcen gehoeren diesem Geraet und sind nicht in Benutzung.
                 unsafe { self.ctx.device.update_descriptor_sets(&writes, &[]) };

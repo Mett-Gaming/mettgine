@@ -2,7 +2,7 @@
 //! und stehen damit allen Spielen offen.
 //!
 //! Ablauf pro Bild (Vulkan 1.3, Dynamic Rendering), nicht Gebrauchtes faellt weg:
-//! 1. Schattenkarte aus Sicht der Sonne
+//! 1. Schattenkarte aus Sicht der Sonne bzw. Schatten-Atlas der Lampen
 //! 2. zweite Kamera (Monitor, Spiegel) in ein eigenes kleines Bild
 //! 3. Szene in ein Offscreen-Bild: Himmel, Welt-Boxen, feste und bewegliche Modelle, Figuren,
 //!    Hologramme, Partikel
@@ -13,7 +13,7 @@
 //!
 //! Dateien: `params` (Eingaben), `init`/`descriptors`/`pipelines` (Aufbau), `world` (selten
 //! geaenderte Daten), `lists` (was ist zu sehen), `draw` (ein Bild vorbereiten),
-//! `frame`/`screen` (aufnehmen), `latency` (Reflex, Anti-Lag, Bildbegrenzung), `diagnostics`, `quality` (Zuschaltbares), `modern`/`models` (moderne Grafik). Darunter die Vulkan-Grundlagen.
+//! `frame`/`screen` (aufnehmen), `lamps`/`lamp_pass`/`lamp_draw`/`lamp_pipes` (Lampenschatten), `contact` (Ecken), `latency` (Reflex, Anti-Lag, Bildbegrenzung), `diagnostics`, `quality` (Zuschaltbares), `modern`/`models` (moderne Grafik). Darunter die Vulkan-Grundlagen.
 //! Shader: `shaders/`, Schnittstelle in `_common.wgsl` und `descriptors`.
 
 pub(crate) mod cache;
@@ -30,10 +30,15 @@ pub(crate) mod timing;
 pub(crate) mod transfer;
 pub(crate) mod util;
 
+mod contact;
 mod descriptors;
 mod draw;
 mod frame;
 mod init;
+mod lamp_draw;
+mod lamp_pass;
+mod lamp_pipes;
+mod lamps;
 mod lists;
 mod models;
 mod modern;
@@ -49,6 +54,7 @@ mod world;
 
 pub use generation::FrameGeneration;
 pub use hdr::HdrLevels;
+pub use lamps::LampShadows;
 pub use latency::{LatencyReport, LatencyTech, LowLatency};
 pub use modern::{MAX_UI_IMAGES, *};
 pub use params::*;
@@ -132,6 +138,7 @@ struct Globals {
     ground: [f32; 4],
     params: [f32; 4],
     sway: [f32; 4],
+    /// x = Verfall, y = Lampen mit Schatten, z = Verdunkelung in Ecken
     extra: [f32; 4],
 }
 
@@ -223,6 +230,10 @@ pub struct Renderer {
     box_count: u32,
     light_buf: Buffer,
     light_count: u32,
+    /// Kopie der Lampen fuer die Auswahl der Schatten
+    lights: Vec<crate::gpu::GpuLight>,
+    lamp: lamp_pass::LampPass,
+    lamp_bufs: Vec<Buffer>,
     static_buf: Buffer,
     static_runs: Runs,
     box_runs: Runs,
@@ -377,6 +388,7 @@ impl Drop for Renderer {
                 .chain(&self.second_globals)
                 .chain(&self.ui_bufs)
                 .chain(&self.particle_bufs)
+                .chain(&self.lamp_bufs)
                 .chain(single)
             {
                 b.destroy(d);
@@ -392,6 +404,7 @@ impl Drop for Renderer {
             }
             self.timer.destroy(d);
             self.splash.destroy(d);
+            self.lamp.destroy(d);
             self.pipes.destroy(d);
             self.desc.destroy(d);
             for i in [

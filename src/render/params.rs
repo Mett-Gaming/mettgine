@@ -104,7 +104,7 @@ pub struct MeshDraw {
     pub tint: Vec4,
     /// pulsierendes Aufleuchten (Warnung), 0..1
     pub blink: f32,
-    /// wirft Schatten (nur mit [`Lighting::Sun`])
+    /// wirft Schatten (Sonne, Lampen mit [`super::Renderer::set_lamp_shadows`])
     pub shadow: bool,
 }
 

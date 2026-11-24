@@ -13,7 +13,9 @@ struct Globals {
     ground: vec4<f32>,    // Umgebungslicht von unten
     params: vec4<f32>,    // x = Lampenzahl, y = dunkle Raeume, z = 1 Raeume / 0 Sonne, w = zweite Kamera
     sway: vec4<f32>,      // Schwanken der Boxen: x = seitlich, y = hoch, z = Gangende z, w = Gangende x
-    extra: vec4<f32>,     // x = Verfall der Welt-Materialien (0..1)
+    // x = Verfall der Welt-Materialien (0..1), y = Zahl der Lampen mit Schatten,
+    // z = Verdunkelung in Ecken (0..1)
+    extra: vec4<f32>,
 };
 
 struct Light {
@@ -49,6 +51,17 @@ struct Inst {
 @group(0) @binding(8) var linear_samp: sampler;
 // Bild der zweiten Kamera
 @group(0) @binding(9) var camera_tex: texture_2d<f32>;
+
+// Schattenfeld einer Lampe, wie `GpuLampTile` in src/render/lamps.rs
+struct LampTile {
+    view_proj: mat4x4<f32>,
+    rect: vec4<f32>, // Feld im Atlas: x, y, Breite, Hoehe
+    info: vec4<f32>, // x = Nummer der Lampe, y = Staerke, z = Texelgroesse im Feld
+};
+@group(0) @binding(10) var lamp_atlas: texture_depth_2d;
+@group(0) @binding(11) var<storage, read> lamp_tiles: array<LampTile>;
+// Tiefe der Szene (nur fuer contact.wgsl)
+@group(0) @binding(12) var scene_depth: texture_depth_2d;
 
 // Beleuchtung durch Lampen statt Sonne?
 fn is_rooms() -> bool {
@@ -125,10 +138,45 @@ fn fog_rooms(p: vec3<f32>) -> f32 {
     return clamp(1.0 - exp(-dist * g.horizon.w), 0.0, 1.0);
 }
 
+// Wie viel Licht der Lampe `i` hier ankommt (1 = alles). `to_lamp` = Richtung, `dl` = Abstand.
+fn lamp_shadow(i: u32, p: vec3<f32>, n: vec3<f32>, to_lamp: vec3<f32>, dl: f32) -> f32 {
+    let count = u32(g.extra.y);
+    for (var k = 0u; k < count; k = k + 1u) {
+        if (u32(lamp_tiles[k].info.x + 0.5) != i) {
+            continue;
+        }
+        let t = lamp_tiles[k];
+        // vom Objekt weg, sonst wirft es Schatten auf sich selbst
+        let q = t.view_proj * vec4<f32>(p + n * (0.02 + dl * 0.012) + to_lamp * 0.03, 1.0);
+        if (q.w <= 0.0) {
+            return 1.0;
+        }
+        let ndc = q.xyz / q.w;
+        let side = max(abs(ndc.x), abs(ndc.y));
+        if (side >= 1.0 || ndc.z >= 1.0) {
+            return 1.0;
+        }
+        let uv = vec2<f32>(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
+        let edge = t.info.z;
+        var sum = 0.0;
+        for (var y = -1; y <= 1; y = y + 1) {
+            for (var x = -1; x <= 1; x = x + 1) {
+                let o = clamp(uv + vec2<f32>(f32(x), f32(y)) * edge, vec2<f32>(edge), vec2<f32>(1.0 - edge));
+                sum = sum + textureSampleCompareLevel(lamp_atlas, shadow_samp, t.rect.xy + o * t.rect.zw, ndc.z);
+            }
+        }
+        // am Rand des Kegels weich auslaufen
+        let shown = 1.0 - smoothstep(0.8, 1.0, side);
+        return 1.0 - (1.0 - sum / 9.0) * t.info.y * shown;
+    }
+    return 1.0;
+}
+
 fn shade_rooms(base: vec3<f32>, p: vec3<f32>, n_in: vec3<f32>) -> vec3<f32> {
     let n = normalize(n_in);
     let time = g.cam_pos.w;
     var light = vec3<f32>(0.0);
+    var open = vec3<f32>(0.0); // Lampenlicht ohne Schatten
     let count = u32(g.params.x);
     for (var i = 0u; i < count; i = i + 1u) {
         let l = lights[i];
@@ -137,11 +185,24 @@ fn shade_rooms(base: vec3<f32>, p: vec3<f32>, n_in: vec3<f32>) -> vec3<f32> {
         if (dl < l.pos.w) {
             let att = pow(1.0 - dl / l.pos.w, 2.0);
             let diffuse = max(dot(n, d / dl), 0.0) * 0.75 + 0.25;
-            light = light + l.color.rgb * l.color.w * att * diffuse * flicker(l.extra.x, l.extra.y, time);
+            var add = l.color.rgb * l.color.w * att * diffuse * flicker(l.extra.x, l.extra.y, time);
+            open = open + add;
+            if (g.extra.y > 0.5) {
+                add = add * lamp_shadow(i, p, n, d / dl, dl);
+            }
+            light = light + add;
         }
     }
     let tipped = g.params.y > 0.5;
-    let ambient = select(vec3<f32>(0.30, 0.30, 0.29), vec3<f32>(0.04, 0.05, 0.045), tipped);
+    var ambient = select(vec3<f32>(0.30, 0.30, 0.29), vec3<f32>(0.04, 0.05, 0.045), tipped);
+    // Viele ueberlappende Lampen machen Schatten blass: Wo Lampenlicht fehlt, fehlt auch ein Teil
+    // des Streulichts
+    if (g.extra.y > 0.5) {
+        let seen = dot(light, vec3<f32>(1.0)) / max(dot(open, vec3<f32>(1.0)), 0.001);
+        let keep = clamp(seen, 0.0, 1.0);
+        ambient = ambient * mix(1.0, keep, 0.7);
+        light = light * mix(1.0, keep, 0.8);
+    }
     // Schwaches Camcorder-Licht im gekippten Markt, damit man Gestalten erkennt
     if (tipped) {
         let dc = g.cam_pos.xyz - p;
