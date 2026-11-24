@@ -204,3 +204,19 @@ fn second_camera_and_ghosts_get_their_own_lists() {
     l.build_skins(&skins, &[], 1, |_| all);
     assert_eq!((l.skins.len(), l.dropped), (1, 1));
 }
+
+#[test]
+fn higher_points_are_further_up_on_the_screen() {
+    let eye = Vec3::new(0.0, 2.0, -5.0);
+    let vp = perspective(1.0, 1.5, 0.1, 100.0) * Mat4::look_at_rh(eye, Vec3::Y * 2.0, Vec3::Y);
+    let mid = project(&vp, Vec3::Y * 2.0).unwrap();
+    assert!((mid.x - 0.5).abs() < 1e-5 && (mid.y - 0.5).abs() < 1e-5);
+    assert!(
+        project(&vp, Vec3::Y * 3.0).unwrap().y < 0.5,
+        "oben = kleines y"
+    );
+    assert!(
+        project(&vp, Vec3::new(0.0, 2.0, -9.0)).is_none(),
+        "hinter der Kamera"
+    );
+}

@@ -1,4 +1,4 @@
-//! Hochladen und Auslesen, gemeinsam fuer `render` und `scene`: Einmal-Befehle, Texturen,
+//! Hochladen und Auslesen: Einmal-Befehle, Texturen,
 //! Viewport, BMP-Export.
 
 use super::context::Context;

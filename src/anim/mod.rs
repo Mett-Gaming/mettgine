@@ -2,7 +2,7 @@
 //! Bildern und Clips per slerp gemischt, danach Eingriffe pro Knochen (Kopf dreht sich zu
 //! einem Ziel, Zucken, gestreckte Glieder, Stop-Motion). Ergebnis: Skinning-Matrizen.
 
-use glam::{Mat4, Quat, Vec3, Vec4};
+use glam::{Mat4, Quat, Vec3};
 
 /// Kennung eines Clips. Das Spiel legt seine Clips als Aufzaehlung fest (Reihenfolge wie in
 /// der .k0a-Datei) und sagt, welche davon Fortbewegung sind und welche im Stand weiterlaufen.
@@ -83,91 +83,33 @@ pub struct AnimSet {
     twitchy: Vec<usize>,
 }
 
-fn f32_at(b: &[u8], o: usize) -> f32 {
-    f32::from_le_bytes(b[o..o + 4].try_into().unwrap())
-}
-fn u32_at(b: &[u8], o: usize) -> u32 {
-    u32::from_le_bytes(b[o..o + 4].try_into().unwrap())
-}
-fn mat34(b: &[u8], o: usize) -> Mat4 {
-    let m = |r: usize, c: usize| f32_at(b, o + (r * 4 + c) * 4);
-    Mat4::from_cols(
-        Vec4::new(m(0, 0), m(1, 0), m(2, 0), 0.0),
-        Vec4::new(m(0, 1), m(1, 1), m(2, 1), 0.0),
-        Vec4::new(m(0, 2), m(1, 2), m(2, 2), 0.0),
-        Vec4::new(m(0, 3), m(1, 3), m(2, 3), 1.0),
-    )
-}
-
-pub fn parse_anim(b: &[u8]) -> AnimSet {
-    assert_eq!(&b[0..4], b"K0A2", "keine K0A2-Animation");
-    let bones = u32_at(b, 4) as usize;
-    let count = u32_at(b, 8) as usize;
-    let mut o = 12;
-    let (mut names, mut parents, mut rest_inv) = (Vec::new(), Vec::new(), Vec::new());
-    for i in 0..bones {
-        let len = b[o] as usize;
-        names.push(String::from_utf8_lossy(&b[o + 1..o + 1 + len]).into_owned());
-        o += 1 + len;
-        let p = i32::from_le_bytes(b[o..o + 4].try_into().unwrap());
-        assert!(p < i as i32, "Eltern muessen vor ihren Kindern stehen");
-        parents.push(p);
-        rest_inv.push(mat34(b, o + 4).inverse());
-        o += 4 + 48;
-    }
-    let (mut clips, mut clip_names) = (Vec::new(), Vec::new());
-    for _ in 0..count {
-        let len = b[o] as usize;
-        clip_names.push(String::from_utf8_lossy(&b[o + 1..o + 1 + len]).into_owned());
-        o += 1 + len;
-        let fps = f32_at(b, o);
-        let frames = u32_at(b, o + 4) as usize;
-        let looped = b[o + 8] != 0;
-        o += 9;
-        let mut locals = Vec::with_capacity(frames * bones);
-        for _ in 0..frames * bones {
-            let f = |k: usize| f32_at(b, o + k * 4);
-            locals.push(Local {
-                rot: Quat::from_xyzw(f(0), f(1), f(2), f(3)).normalize(),
-                pos: Vec3::new(f(4), f(5), f(6)),
-                scale: Vec3::new(f(7), f(8), f(9)),
-            });
-            o += 40;
-        }
-        clips.push(ClipData {
-            fps,
-            frames,
-            looped,
-            locals,
-        });
-    }
-    let find = |n: &str| names.iter().position(|x| x == n);
-    let arms = ["UpperArm.L", "UpperArm.R", "LowerArm.L", "LowerArm.R"]
-        .iter()
-        .filter_map(|n| find(n))
-        .collect();
-    let twitchy = ["Neck", "Head", "UpperArm.L", "UpperArm.R", "Chest"]
-        .iter()
-        .filter_map(|n| find(n))
-        .collect();
-    AnimSet {
-        head: find("Head"),
-        neck: find("Neck"),
-        arms,
-        twitchy,
-        names,
-        parents,
-        rest_inv,
-        clips,
-        clip_names,
-    }
-}
-
 fn hash(x: f32) -> f32 {
     ((x * 12.9898).sin() * 43_758.547).fract()
 }
 
 impl AnimSet {
+    fn new(
+        names: Vec<String>,
+        parents: Vec<i32>,
+        rest_inv: Vec<Mat4>,
+        clips: Vec<ClipData>,
+        clip_names: Vec<String>,
+    ) -> Self {
+        let find = |n: &str| names.iter().position(|x| x == n);
+        let all = |list: &[&str]| list.iter().filter_map(|n| find(n)).collect();
+        Self {
+            head: find("Head"),
+            neck: find("Neck"),
+            arms: all(&["UpperArm.L", "UpperArm.R", "LowerArm.L", "LowerArm.R"]),
+            twitchy: all(&["Neck", "Head", "UpperArm.L", "UpperArm.R", "Chest"]),
+            names,
+            parents,
+            rest_inv,
+            clips,
+            clip_names,
+        }
+    }
+
     pub fn bones(&self) -> usize {
         self.parents.len()
     }
@@ -182,19 +124,35 @@ impl AnimSet {
 
     /// Name eines Clips in der Datei (zum Pruefen der Reihenfolge).
     pub fn clip_name<C: ClipId>(&self, clip: C) -> &str {
-        &self.clip_names[clip.index()]
+        self.clip_names.get(clip.index()).map_or("", |n| n.as_str())
     }
 
-    /// Dauer eines Clips in Sekunden.
+    /// Clip in der Datei; unbekannte Nummern meinen den letzten. Nie leer (siehe `file`).
+    fn clip(&self, index: usize) -> Option<&ClipData> {
+        self.clips.get(index).or(self.clips.last())
+    }
+
+    /// Dauer eines Clips in Sekunden (0 = die Datei hat keine Clips).
     pub fn duration<C: ClipId>(&self, clip: C) -> f32 {
-        let c = &self.clips[clip.index().min(self.clips.len() - 1)];
-        c.frames as f32 / c.fps
+        self.clip(clip.index())
+            .map_or(0.0, |c| c.frames as f32 / c.fps)
     }
 
     /// Lokale Pose eines Clips zur Zeit `t` (Schleife oder am Ende stehen bleiben).
     fn sample_locals(&self, clip: usize, t: f32, out: &mut Vec<Local>) {
-        let c = &self.clips[clip.min(self.clips.len() - 1)];
         let n = self.bones();
+        out.clear();
+        let Some(c) = self.clip(clip) else {
+            // Datei ohne Clips: Ruhehaltung
+            let rest = self.rest_inv.iter().map(|m| m.inverse());
+            let globals: Vec<Mat4> = rest.collect();
+            out.extend(globals.iter().zip(&self.parents).map(|(g, &p)| {
+                let parent = usize::try_from(p).map_or(Mat4::IDENTITY, |p| globals[p]);
+                let (scale, rot, pos) = (parent.inverse() * *g).to_scale_rotation_translation();
+                Local { rot, pos, scale }
+            }));
+            return;
+        };
         let pos = if c.looped {
             (t * c.fps).rem_euclid(c.frames as f32)
         } else {
@@ -207,7 +165,6 @@ impl AnimSet {
             (f0 + 1).min(c.frames - 1)
         };
         let a = pos.fract();
-        out.clear();
         for b in 0..n {
             out.push(c.locals[f0 * n + b].mix(c.locals[f1 * n + b], a));
         }
@@ -303,8 +260,10 @@ impl AnimSet {
 }
 
 mod animator;
+mod file;
 mod look;
 pub use animator::Animator;
+pub use file::parse_anim;
 use look::look_towards;
 
 #[cfg(test)]

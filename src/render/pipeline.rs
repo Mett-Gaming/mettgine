@@ -1,4 +1,4 @@
-//! Grafik-Pipelines bauen (Dynamic Rendering), gemeinsam fuer `render` und `scene`.
+//! Grafik-Pipelines bauen (Dynamic Rendering).
 
 use super::Result;
 use ash::vk;

@@ -56,6 +56,15 @@ use util::{Buffer, Image};
 
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
+/// Ist die Grafikkarte ausgefallen (Treiberabsturz, Karte abgezogen)? Dann hilft nur ein neuer
+/// [`Renderer`] oder ein Neustart; andere Zeichenfehler darf das Spiel noch einmal versuchen.
+pub fn is_device_lost(e: &(dyn std::error::Error + 'static)) -> bool {
+    matches!(
+        e.downcast_ref::<vk::Result>(),
+        Some(&vk::Result::ERROR_DEVICE_LOST | &vk::Result::ERROR_SURFACE_LOST_KHR)
+    )
+}
+
 const COLOR_FORMAT: vk::Format = vk::Format::R8G8B8A8_UNORM;
 const DEPTH_FORMAT: vk::Format = vk::Format::D32_SFLOAT;
 const FRAMES_IN_FLIGHT: usize = 2;

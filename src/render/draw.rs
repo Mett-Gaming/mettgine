@@ -172,28 +172,48 @@ impl Renderer {
                 self.needs_recreate = true;
                 return Ok(());
             };
-            let image = image_index as usize;
-            let cap = self.capture.prepare(&self.ctx, &self.swapchain)?;
-            if self.splash.active() {
-                let d = &self.ctx.device;
-                self.splash
-                    .record(d, frame.cmd, fi, &self.swapchain, image, cap)?;
-                self.particles.clear();
-            } else {
-                self.timer.collect(&self.ctx.device, fi, &mut self.stats);
-                let start = Instant::now();
-                let counts = self.fill_frame(fi, f)?;
-                self.record(frame.cmd, fi, image, f, counts, cap)?;
-                self.stats.cpu_ms = start.elapsed().as_secs_f32() * 1000.0;
-            }
-            if present::submit_and_present(&self.ctx, &self.swapchain, &frame, image_index)? {
+            if let Err(e) = self.draw_to(f, fi, &frame, image_index) {
+                // Bild verwerfen; gelingt das, kann das Spiel weiterzeichnen
+                present::reset_frame(&self.ctx, &mut self.frames[fi])?;
                 self.needs_recreate = true;
-            }
-            if cap.is_some() {
-                self.capture.finish(&self.ctx, &self.swapchain)?;
+                return Err(e);
             }
         }
         self.frame_index = (fi + 1) % FRAMES_IN_FLIGHT;
+        Ok(())
+    }
+
+    /// Das geholte Swapchain-Bild fuellen, abschicken und anzeigen.
+    ///
+    /// # Safety
+    /// Die GPU muss mit den Puffern des Bildes `fi` fertig sein.
+    unsafe fn draw_to(
+        &mut self,
+        f: &FrameInput,
+        fi: usize,
+        frame: &Frame,
+        image_index: u32,
+    ) -> Result<()> {
+        let image = image_index as usize;
+        let cap = self.capture.prepare(&self.ctx, &self.swapchain)?;
+        if self.splash.active() {
+            let d = &self.ctx.device;
+            self.splash
+                .record(d, frame.cmd, fi, &self.swapchain, image, cap)?;
+            self.particles.clear();
+        } else {
+            self.timer.collect(&self.ctx.device, fi, &mut self.stats);
+            let start = Instant::now();
+            let counts = self.fill_frame(fi, f)?;
+            self.record(frame.cmd, fi, image, f, counts, cap)?;
+            self.stats.cpu_ms = start.elapsed().as_secs_f32() * 1000.0;
+        }
+        if present::submit_and_present(&self.ctx, &self.swapchain, frame, image_index)? {
+            self.needs_recreate = true;
+        }
+        if cap.is_some() {
+            self.capture.finish(&self.ctx, &self.swapchain)?;
+        }
         Ok(())
     }
 }

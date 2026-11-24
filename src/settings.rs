@@ -73,15 +73,27 @@ pub fn load(app: &str, file: &str) -> KeyValues {
         .unwrap_or_default()
 }
 
+/// Schreibt eine Datei so, dass nie eine halbe entsteht: erst daneben, dann umbenennen.
+pub fn write_atomic(path: &std::path::Path, data: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let mut name = path.as_os_str().to_owned();
+    name.push(".neu");
+    let mut f = std::fs::File::create(&name)?;
+    f.write_all(data)?;
+    f.sync_all()?;
+    drop(f);
+    std::fs::rename(&name, path)
+}
+
 /// Speichert die Datei; Fehler landen im Protokoll.
 pub fn save(app: &str, file: &str, kv: &KeyValues) {
     let Some(p) = path(app, file) else {
         return;
     };
-    if let Some(dir) = p.parent() {
-        let _ = std::fs::create_dir_all(dir);
-    }
-    if let Err(e) = std::fs::write(&p, kv.to_text()) {
+    if let Err(e) = write_atomic(&p, kv.to_text().as_bytes()) {
         crate::crash::log(&format!("Einstellungen nicht gespeichert: {e}"));
     }
 }
@@ -94,6 +106,17 @@ mod tests {
     fn files_live_in_the_shared_launcher_folder() {
         let p = path("spiel", "settings.txt").unwrap();
         assert!(p.ends_with(".mettlauncher/spiel/settings.txt"), "{p:?}");
+    }
+
+    #[test]
+    fn files_are_replaced_in_one_step() {
+        let dir = std::env::temp_dir().join(format!("mettgine-set-{}", std::process::id()));
+        let p = dir.join("a/b.txt");
+        write_atomic(&p, b"eins").unwrap();
+        write_atomic(&p, b"zwei").unwrap();
+        assert_eq!(std::fs::read(&p).unwrap(), b"zwei");
+        assert_eq!(std::fs::read_dir(p.parent().unwrap()).unwrap().count(), 1);
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

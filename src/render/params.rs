@@ -2,7 +2,7 @@
 
 use super::{UiVertex, WorldShaders, SHADOW_SIZE};
 use crate::gpu::{MeshData, SkinData};
-use glam::{Mat4, Vec3, Vec4};
+use glam::{Mat4, Vec2, Vec3, Vec4};
 
 /// Aufloesung, in der die Szene gezeichnet wird.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -261,6 +261,17 @@ pub struct FrameInput<'a> {
 /// Spiegeln; Nachbearbeitung, UI und Schattenkarte rechnen mit derselben Regel.
 pub fn perspective(fov_y: f32, aspect: f32, near: f32, far: f32) -> Mat4 {
     Mat4::perspective_rh(fov_y, aspect, near, far)
+}
+
+/// Wo ein Weltpunkt im Bild liegt: x nach rechts, y nach unten, 0..1 = im Bild. `None` = hinter
+/// der Kamera. Mal [`super::Renderer::ui_area`] ergibt die Stelle auf der Oberflaeche.
+pub fn project(view_proj: &Mat4, p: Vec3) -> Option<Vec2> {
+    let clip = *view_proj * p.extend(1.0);
+    if clip.w <= 0.05 {
+        return None;
+    }
+    let ndc = clip.truncate() / clip.w;
+    Some(Vec2::new(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5))
 }
 
 /// Ortho-Kamera der Sonne, die einen Wuerfel um `center` (halbe Kante `radius`) abdeckt.

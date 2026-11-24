@@ -58,8 +58,8 @@ impl Context {
             }
 
             let app_info = vk::ApplicationInfo::default()
-                .application_name(c"Kasse 0")
-                .engine_name(c"kasse0")
+                .application_name(c"Mettgine")
+                .engine_name(c"Mettgine")
                 .api_version(vk::API_VERSION_1_3);
             let mut extensions = ash_window::enumerate_required_extensions(display)?.to_vec();
             let mut layers = Vec::new();

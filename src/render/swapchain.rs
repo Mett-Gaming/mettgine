@@ -32,7 +32,8 @@ impl Swapchain {
                         .find(|f| f.format == vk::Format::R8G8B8A8_UNORM)
                 })
                 .copied()
-                .unwrap_or(formats[0]);
+                .or_else(|| formats.first().copied())
+                .ok_or("Das Fenster bietet kein Bildformat an")?;
 
             let extent = if caps.current_extent.width != u32::MAX {
                 caps.current_extent

@@ -1,4 +1,4 @@
-//! Bilder im Flug, Abschicken, Anzeigen und Bildschirmfotos, gemeinsam fuer `render` und `scene`.
+//! Bilder im Flug, Abschicken, Anzeigen und Bildschirmfotos.
 
 use super::context::Context;
 use super::swapchain::Swapchain;
@@ -78,10 +78,7 @@ pub(crate) unsafe fn acquire(
         frame.image_available,
         vk::Fence::null(),
     ) {
-        Ok((i, _)) => {
-            ctx.device.reset_fences(&[frame.in_flight])?;
-            Ok(Some(i))
-        }
+        Ok((i, _)) => Ok(Some(i)),
         Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => Ok(None),
         Err(e) => Err(e.into()),
     }
@@ -101,6 +98,8 @@ pub(crate) unsafe fn submit_and_present(
     let stages = [vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
     let cmds = [frame.cmd];
     let signal = [swapchain.render_finished[image_index as usize]];
+    // Erst hier: Scheitert das Aufnehmen, bleibt der Fence frei und das naechste Bild wartet nicht
+    ctx.device.reset_fences(&[frame.in_flight])?;
     ctx.device.queue_submit(
         ctx.queue,
         &[vk::SubmitInfo::default()
@@ -123,6 +122,25 @@ pub(crate) unsafe fn submit_and_present(
         Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => Ok(true),
         Err(e) => Err(e.into()),
     }
+}
+
+/// Synchronisation eines Bildes nach einem Fehler erneuern: Der Semaphor kann schon signalisiert
+/// sein, ohne dass jemand auf ihn wartet. Danach muss die Swapchain neu gebaut werden.
+///
+/// # Safety
+/// `frame` muss zu `ctx` gehoeren.
+pub(crate) unsafe fn reset_frame(ctx: &Context, frame: &mut Frame) -> Result<()> {
+    let d = &ctx.device;
+    d.device_wait_idle()?;
+    let semaphore = d.create_semaphore(&vk::SemaphoreCreateInfo::default(), None)?;
+    let info = vk::FenceCreateInfo::default().flags(vk::FenceCreateFlags::SIGNALED);
+    let fence = d.create_fence(&info, None)?;
+    d.destroy_semaphore(
+        std::mem::replace(&mut frame.image_available, semaphore),
+        None,
+    );
+    d.destroy_fence(std::mem::replace(&mut frame.in_flight, fence), None);
+    Ok(())
 }
 
 /// Swapchain-Bild zum Anzeigen freigeben, vorher ggf. in den Foto-Puffer kopieren.
