@@ -6,7 +6,7 @@ Das Spiel sagt nur „Erfolg X ist erreicht“. Speichern, Einblenden, Ton, List
 1. **Erfolge beschreiben** in `erfolge/erfolge.json` (siehe unten).
 2. **Ins Paket legen:** Der Ordner `erfolge` muss im Zip **neben der exe** liegen. Den Schritt im Bau-Ablauf (`.github/workflows`) und im lokalen `dist/` ergänzen. Änderungen in `.github/` braucht die Person vorher.
 3. **Im Spiel melden** (siehe unten).
-4. **Prüfen:** Test, dass jede im Code benutzte Id in der Datei steht (Vorbild: `src/achievements.rs` in HACKEPETER).
+4. **Prüfen:** Test, dass jede im Code benutzte Id in der Datei steht (Vorbild: `src/achievements.rs` in KASSE 0).
 
 ## Die Datei
 ```json
