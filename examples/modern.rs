@@ -10,6 +10,7 @@ use mettgine::camera::FirstPerson;
 use mettgine::canvas::Canvas;
 use mettgine::input::{Bind, Key, Pad, Stick};
 use mettgine::menu::{Event, Item, Kind, Menu, Style};
+use mettgine::particles::ParticleInst;
 use mettgine::physics::{BodyDesc, BodyId, Motion, Physics, Shape};
 use mettgine::profile::{draw_overlay, Meter};
 use mettgine::random::Random;
@@ -61,6 +62,11 @@ enum Opt {
     RayMirror,
     Paths,
     Night,
+    Accumulate,
+    AutoExposure,
+    Particles,
+    Decals,
+    Vsync,
 }
 
 fn menu() -> Menu<Opt> {
@@ -94,6 +100,11 @@ fn menu() -> Menu<Opt> {
         on(Opt::RayIndirect, "Strahlen: Streulicht", false),
         on(Opt::RayMirror, "Strahlen: Spiegelung", false),
         on(Opt::Paths, "Pathtracing", false),
+        on(Opt::Accumulate, "Pfade bei Stillstand mitteln", false),
+        on(Opt::AutoExposure, "Belichtung automatisch", false),
+        on(Opt::Particles, "Partikel", true),
+        on(Opt::Decals, "Aufkleber", true),
+        on(Opt::Vsync, "An Bildschirm binden", true),
         on(Opt::Night, "Nacht", false),
     ])
 }
@@ -103,6 +114,9 @@ struct Demo {
     open: bool,
     features: Features,
     night: bool,
+    particles: bool,
+    decals: bool,
+    vsync: bool,
     cam: FirstPerson,
     physics: Physics,
     step: FixedStep,
@@ -144,6 +158,9 @@ impl Demo {
             open: false,
             features: Features::all(),
             night: false,
+            particles: true,
+            decals: true,
+            vsync: true,
             cam: FirstPerson {
                 pos: Vec3::new(0.0, 2.0, 10.0),
                 ..Default::default()
@@ -202,6 +219,26 @@ impl Demo {
                 Opt::RayMirror => f.ray_tracing.reflections = on,
                 Opt::Paths => f.path_tracing = on.then(PathTracing::default),
                 Opt::Night => self.night = on,
+                Opt::Particles => self.particles = on,
+                Opt::Decals => self.decals = on,
+                Opt::Vsync => self.vsync = on,
+                Opt::Accumulate => {
+                    f.path_tracing = Some(PathTracing {
+                        accumulate: on,
+                        ..f.path_tracing.unwrap_or_default()
+                    })
+                }
+                Opt::AutoExposure => {
+                    f.exposure = if on {
+                        Exposure::Auto {
+                            min: 0.3,
+                            max: 4.0,
+                            speed: 2.0,
+                        }
+                    } else {
+                        Exposure::Fixed(1.0)
+                    }
+                }
                 _ => {}
             },
             Event::Chosen(Opt::Aa, i) => {
@@ -330,15 +367,43 @@ impl Game for Demo {
                 ground: Vec3::splat(0.004),
             };
         }
+        let decals: Vec<DecalDraw> = (0..6)
+            .map(|i| DecalDraw {
+                material: self.materials[i % 6],
+                transform: Mat4::from_translation(Vec3::new(i as f32 * 2.5 - 6.0, 0.0, 7.0))
+                    * Mat4::from_rotation_y(i as f32)
+                    * Mat4::from_scale(Vec3::new(1.0, 0.6, 1.0)),
+                tint: Vec4::new(1.0, 1.0, 1.0, 0.8),
+            })
+            .collect();
+        if self.decals && self.materials.len() > 6 {
+            scene.decals = &decals;
+        }
+        if self.particles {
+            let smoke: Vec<ParticleInst> = (0..40)
+                .map(|i| {
+                    let age = (self.time * 0.4 + i as f32 / 40.0).fract();
+                    let a = i as f32 * 2.4;
+                    ParticleInst {
+                        pos: [a.cos() * age * 0.6 + 4.0, age * 3.0, a.sin() * age * 0.6],
+                        size: 0.15 + age * 0.4,
+                        color: [0.6, 0.6, 0.6, 0.35 * (1.0 - age)],
+                        extra: [a, 0.0, 0.8, 0.0],
+                    }
+                })
+                .collect();
+            stage.renderer.queue_particles(&smoke);
+        }
+        stage.renderer.set_vsync(self.vsync);
         self.meter.push(dt, &stage.renderer.stats());
         let (w, h) = stage.renderer.ui_area();
         self.canvas.begin(w, h);
         draw_overlay(&mut self.canvas, 8.0, 8.0, 14.0, &self.meter.lines());
         if self.open {
             let c = &mut self.canvas;
-            c.rect(w - 460.0, 40.0, 440.0, 16.0 * 34.0, [0.0, 0.0, 0.0, 0.75]);
+            c.rect(w - 460.0, 40.0, 440.0, 21.0 * 30.0, [0.0, 0.0, 0.0, 0.75]);
             self.menu
-                .draw(c, w - 450.0, 50.0, 420.0, 34.0, &Style::default());
+                .draw(c, w - 450.0, 50.0, 420.0, 30.0, &Style::default());
         }
         stage.draw(&FrameInput {
             time: self.time,
