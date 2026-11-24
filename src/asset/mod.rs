@@ -1,8 +1,9 @@
-//! Spieldaten laden: eingebettet in die exe oder aus einem Ordner, im Hintergrund, mit Griffen
+//! Spieldaten laden: aus Paketen neben der exe ([`data`]), eingebettet oder aus einem Ordner, im Hintergrund, mit Griffen
 //! ([`Handle`]) statt Kopien. Im Debug-Bau laedt ein Ordner geaenderte Dateien von selbst neu.
 //!
 //! Wer alles einbettet und beim Start liest (wie bisher), braucht dieses Modul nicht.
 
+pub mod data;
 #[cfg(feature = "gltf")]
 pub mod gltf;
 #[cfg(feature = "images")]
@@ -24,6 +25,8 @@ pub enum Source {
     /// Name und Inhalt, z. B. aus `include_bytes!`
     Embedded(&'static [(&'static str, &'static [u8])]),
     Folder(PathBuf),
+    /// Paketdateien (`.mpak`)
+    Packs(Arc<data::Packs>),
 }
 
 impl Source {
@@ -52,6 +55,7 @@ impl Source {
                 let path = safe_join(dir, name)?;
                 std::fs::read(path).map_err(|e| format!("{name}: {e}"))
             }
+            Source::Packs(p) => p.read(name),
         }
     }
 

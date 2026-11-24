@@ -1,6 +1,6 @@
 [package]
 name = "mettgine"
-version = "0.20.0"
+version = "0.21.0"
 edition = "2021"
 description = "Mettgine - Engine der Mett-Gaming-Spiele (Vulkan, Animation, Absturzberichte)"
 
@@ -16,6 +16,8 @@ font8x8 = "0.3"
 ab_glyph = "0.2"
 # Startbild entpacken (splash)
 png = "0.17"
+# Paketdateien fuer Spieldaten (asset::pack)
+mpak = { path = "mpak" }
 # Controller (input)
 gilrs = "0.11"
 # Audio-Wiedergabe (audio)

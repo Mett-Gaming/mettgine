@@ -1,0 +1,10 @@
+[package]
+name = "mpak"
+version = "0.1.0"
+edition = "2021"
+description = "Paketformat fuer Spieldaten der Mettgine"
+
+[dependencies]
+sha2 = "0.10"
+# gepackte Eintraege (dieselbe Bibliothek wie im png-Entpacker der Engine)
+flate2 = "1"

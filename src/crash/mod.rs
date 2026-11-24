@@ -161,6 +161,11 @@ pub fn fatal(what: &str, detail: &str, player_msg: &str) {
     native::message_box(&app_title(), &text);
 }
 
+/// Sind Absturzberichte eingerichtet?
+pub(crate) fn active() -> bool {
+    state().is_some()
+}
+
 fn app_title() -> String {
     state()
         .and_then(|m| m.try_lock().ok().map(|s| s.title.clone()))
