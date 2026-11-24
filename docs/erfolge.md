@@ -51,7 +51,7 @@ Im Protokoll des Launchers steht, wenn ein Spiel eine unbekannte Id meldet.
 
 ## Overlay
 - Einblendungen und Leiste erscheinen ohne Zutun des Spiels, bei jedem Vulkan-Spiel.
-- F9 (im Launcher einstellbar) bzw. Select+Start öffnet das Feld. `app::run` erledigt das: Maus, Tasten und Controller gehen dann nicht ans Spiel, die Maus wird frei und danach wieder gefangen.
+- F9 (im Launcher einstellbar) bzw. Select+Start öffnet das Overlay: unten Symbole, die verschiebbare Fenster an- und ausschalten. `app::run` erledigt das: Maus, Tasten und Controller gehen dann nicht ans Spiel, die Maus wird frei und danach wieder gefangen.
 - `stage.overlay_open()` sagt, ob es offen ist. **Im Einzelspieler anhalten**, im Mehrspieler weiterlaufen.
 - Freie Ecken: Einblendungen stehen unten rechts, die Leiste oben links (beides einstellbar). Wichtiges dort nicht dauerhaft anzeigen.
 
@@ -60,14 +60,14 @@ Nur wenn `METT_LAUNCHER_LINK` gesetzt ist: TCP zu `METT_PRESENCE_ADDR` (nur loca
 
 | Richtung | Zeile | Bedeutung |
 |---|---|---|
-| Spiel → Launcher | `{"token":"<METT_PRESENCE_TOKEN>","link":1}` | erste Zeile |
+| Spiel → Launcher | `{"token":"<METT_PRESENCE_TOKEN>","link":2}` | erste Zeile |
 | Spiel → Launcher | `{"unlock":"id","n":1}` | freischalten |
 | Spiel → Launcher | `{"progress":"id","value":40,"n":2}` | Stand melden |
 | Launcher → Spiel | `{"ack":2}` | gespeichert; ohne Antwort nach 5 s noch einmal senden |
 | Spiel → Launcher | `{"overlay":"toggle"}` | Tastenkürzel gedrückt (`METT_OVERLAY_KEY`, z. B. `f9` oder `shift+tab`) |
 | Launcher → Spiel | `{"overlay":true}` / `false` | Feld offen bzw. zu |
-| Spiel → Launcher | `{"ui":["move",x,y]}`, `click` ebenso | Maus, 0 bis 1 im Fenster |
-| Spiel → Launcher | `{"ui":["scroll",1]}`, `["up"]`, `["down"]`, `["ok"]`, `["back"]` | Bedienung |
+| Spiel → Launcher | `{"ui":["move",x,y]}`, ebenso `click` und `release` | Maus (links), 0 bis 1 im Fenster; `release` nur mit `"link":2` |
+| Spiel → Launcher | `{"ui":["scroll",1]}`, `["up"]`, `["down"]`, `["left"]`, `["right"]`, `["ok"]`, `["back"]` | Bedienung |
 
 Höchstens 300 Erfolgsmeldungen in zehn Sekunden. Die Zeilen von `presence` laufen über eine eigene Verbindung.
 

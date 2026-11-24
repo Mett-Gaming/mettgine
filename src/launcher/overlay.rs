@@ -101,7 +101,12 @@ impl Overlay {
                     },
                 ..
             } => return self.key(*code, *state == ElementState::Pressed, *repeat, open),
-            WindowEvent::Focused(false) => self.shift = false,
+            WindowEvent::Focused(false) => {
+                self.shift = false;
+                if open {
+                    self.pointer("release");
+                }
+            }
             WindowEvent::KeyboardInput { .. } if open => return Route::Swallow,
             WindowEvent::CursorMoved { position, .. } if open => {
                 self.mouse = (
@@ -112,8 +117,9 @@ impl Overlay {
                 return Route::Swallow;
             }
             WindowEvent::MouseInput { state, button, .. } if open => {
-                if *state == ElementState::Pressed && *button == MouseButton::Left {
-                    self.pointer("click");
+                if *button == MouseButton::Left {
+                    let down = *state == ElementState::Pressed;
+                    self.pointer(if down { "click" } else { "release" });
                 }
                 return Route::Swallow;
             }
@@ -127,6 +133,11 @@ impl Overlay {
             _ => {}
         }
         Route::Game
+    }
+
+    /// Liste im Overlay blaettern; positiv = nach oben.
+    fn scroll(&self, by: f32) {
+        self.send(format!("{{\"ui\":[\"scroll\",{by:.2}]}}"));
     }
 
     fn pointer(&self, what: &str) {
@@ -152,6 +163,10 @@ impl Overlay {
             match code {
                 KeyCode::ArrowUp | KeyCode::KeyW => self.ui("up"),
                 KeyCode::ArrowDown | KeyCode::KeyS => self.ui("down"),
+                KeyCode::ArrowLeft | KeyCode::KeyA => self.ui("left"),
+                KeyCode::ArrowRight | KeyCode::KeyD => self.ui("right"),
+                KeyCode::PageUp => self.scroll(1.0),
+                KeyCode::PageDown => self.scroll(-1.0),
                 KeyCode::Enter | KeyCode::Space if !repeat => self.ui("ok"),
                 KeyCode::Escape if !repeat => self.ui("back"),
                 _ => {}
@@ -178,18 +193,25 @@ impl Overlay {
         }
         let wheel = std::mem::take(&mut self.wheel);
         if wheel != 0.0 {
-            self.send(format!("{{\"ui\":[\"scroll\",{wheel:.2}]}}"));
+            self.scroll(wheel);
         }
         if !toggled {
             for (binds, what) in [
                 ([Bind::Pad(Pad::Up), Bind::Stick(Stick::Up)], "up"),
                 ([Bind::Pad(Pad::Down), Bind::Stick(Stick::Down)], "down"),
+                ([Bind::Pad(Pad::Left), Bind::Stick(Stick::Left)], "left"),
+                ([Bind::Pad(Pad::Right), Bind::Stick(Stick::Right)], "right"),
                 ([Bind::Pad(Pad::South); 2], "ok"),
                 ([Bind::Pad(Pad::East); 2], "back"),
             ] {
                 if input.pressed(&binds) {
                     self.ui(what);
                 }
+            }
+        }
+        for (pad, by) in [(Pad::LeftBumper, 1.0), (Pad::RightBumper, -1.0)] {
+            if input.pressed(&[Bind::Pad(pad)]) {
+                self.scroll(by);
             }
         }
         input.hide_from_game();

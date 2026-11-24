@@ -62,7 +62,7 @@ impl Link {
         if !addr.ip().is_loopback() || !clean {
             return None;
         }
-        let hello = format!("{{\"token\":\"{token}\",\"link\":1}}\n");
+        let hello = format!("{{\"token\":\"{token}\",\"link\":2}}\n");
         let shared = Arc::new(Shared::default());
         let state = shared.clone();
         std::thread::Builder::new()
@@ -186,7 +186,7 @@ mod tests {
             r.read_line(&mut s).unwrap();
             s
         };
-        assert_eq!(next(), "{\"token\":\"geheim\",\"link\":1}\n");
+        assert_eq!(next(), "{\"token\":\"geheim\",\"link\":2}\n");
         assert_eq!(next(), "{\"unlock\":\"erste\",\"n\":1}\n");
         w.write_all(b"M\xfcll\n{\"ack\":1}\n{\"overlay\":true}\n")
             .unwrap();
