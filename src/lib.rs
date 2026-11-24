@@ -14,6 +14,9 @@
 //! - `ui`: Text und einfache Formen fuer Menues und HUD.
 //! - `crash`, `crash_window`: Protokoll, Absturzberichte und Absturzfenster.
 
+/// Fenster-Bibliothek der Engine (Ereignisse in `app::Game::event`)
+pub use winit;
+
 pub mod anim;
 pub mod app;
 pub mod audio;
