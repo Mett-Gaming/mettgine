@@ -203,11 +203,11 @@ fn check(window: &Window, dir: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Zeichnet einen Fall und liefert die Bildpunkte.
+type Run<'a> = dyn Fn(&mut Renderer, &str, &Case) -> Result<Vec<u8>> + 'a;
+
 /// Pathtracing: eigenes Entrauschen gegen Ray Reconstruction, Vergleich mit langem Mitteln.
-fn check_denoising(
-    r: &mut Renderer,
-    run: &dyn Fn(&mut Renderer, &str, &Case) -> Result<Vec<u8>>,
-) -> Result<()> {
+fn check_denoising(r: &mut Renderer, run: &Run) -> Result<()> {
     let mut case = Case {
         upscaler: Upscaler::Own,
         scale: 1.0,

@@ -4,6 +4,7 @@
 
 #[cfg(feature = "fsr")]
 mod fsr;
+#[cfg(any(feature = "fsr", feature = "xess", feature = "streamline"))]
 mod library;
 #[cfg(feature = "streamline")]
 mod streamline;
@@ -155,20 +156,16 @@ impl Vendors {
 
     /// Ist etwas da, das ein vollstaendig ausgestattetes Geraet braucht?
     pub fn any(&self) -> bool {
-        let mut any = false;
-        #[cfg(feature = "fsr")]
-        {
-            any |= self.fsr.is_some();
-        }
-        #[cfg(feature = "xess")]
-        {
-            any |= self.xess.is_some();
-        }
-        #[cfg(feature = "streamline")]
-        {
-            any |= self.streamline.is_some();
-        }
-        any
+        let list = [
+            #[cfg(feature = "fsr")]
+            self.fsr.is_some(),
+            #[cfg(feature = "xess")]
+            self.xess.is_some(),
+            #[cfg(feature = "streamline")]
+            self.streamline.is_some(),
+            false,
+        ];
+        list.contains(&true)
     }
 
     /// Bibliothek, aus der Vulkan geladen werden soll (None = wie ueblich).
@@ -190,12 +187,11 @@ impl Vendors {
 
     /// Zusaetzliche Erweiterungen der Instanz.
     pub fn instance_extensions(&self) -> Vec<std::ffi::CString> {
-        let mut list: Vec<std::ffi::CString> = Vec::new();
         #[cfg(feature = "xess")]
         if let Some(x) = &self.xess {
-            list.extend(x.instance_extensions());
+            return x.instance_extensions();
         }
-        list.clone()
+        Vec::new()
     }
 
     /// Zusaetzliche Erweiterungen des Geraets.
@@ -208,12 +204,11 @@ impl Vendors {
         pd: vk::PhysicalDevice,
     ) -> Vec<std::ffi::CString> {
         let _ = (instance, pd);
-        let mut list: Vec<std::ffi::CString> = Vec::new();
         #[cfg(feature = "xess")]
         if let Some(x) = &self.xess {
-            list.extend(x.device_extensions(instance, pd));
+            return x.device_extensions(instance, pd);
         }
-        list.clone()
+        Vec::new()
     }
 
     /// Kette der Geraete-Faehigkeiten um Noetiges ergaenzen; `chain` beginnt mit
