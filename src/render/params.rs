@@ -1,6 +1,6 @@
 //! Was ein Spiel uebergibt: beim Aufbau ([`Config`]) und pro Bild ([`FrameInput`]).
 
-use super::{UiVertex, WorldShaders, SHADOW_SIZE};
+use super::{SceneInput, UiVertex, WorldShaders, SHADOW_SIZE};
 use crate::gpu::{MeshData, SkinData};
 use glam::{Mat4, Vec2, Vec3, Vec4};
 
@@ -232,6 +232,8 @@ pub struct Vhs {
 pub enum Post {
     Clean(Clean),
     Vhs(Vhs),
+    /// unveraendert aufs Fenster, nur mit Schwarzblende (0..1)
+    Plain(f32),
 }
 
 /// Ein Bild.
@@ -254,6 +256,8 @@ pub struct FrameInput<'a> {
     pub bones: &'a [Mat4],
     /// Dreiecke in Einheiten der virtuellen Flaeche ([`Config::ui`])
     pub ui: &'a [UiVertex],
+    /// moderne Grafik; ersetzt `view` und `lighting`. None (Vorgabe) = einfache Grafik
+    pub scene: Option<&'a SceneInput<'a>>,
 }
 
 impl Default for Sun {
@@ -302,6 +306,7 @@ impl Default for FrameInput<'_> {
             camera_skins: &[],
             bones: &[],
             ui: &[],
+            scene: None,
         }
     }
 }

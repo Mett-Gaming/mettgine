@@ -148,6 +148,7 @@ fn params(k: usize) -> FrameInput<'static> {
         camera_skins: &[],
         bones: &[],
         ui: &[],
+        scene: None,
     }
 }
 

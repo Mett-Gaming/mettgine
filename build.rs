@@ -1,6 +1,7 @@
 //! Kompiliert alle `shaders/*.wgsl` mit naga zu SPIR-V (kein Vulkan SDK noetig).
 //! Jede Datei braucht die Entry Points `vs_main` und `fs_main`; erzeugt werden
-//! `<name>.vert.spv` und `<name>.frag.spv` in OUT_DIR.
+//! `<name>.vert.spv` und `<name>.frag.spv` in OUT_DIR, fuer weitere Entry Points
+//! `<name>.<entry>.spv`.
 
 use std::{env, fs, path::PathBuf};
 
@@ -43,10 +44,13 @@ fn main() {
         .validate(&module)
         .unwrap_or_else(|e| panic!("{name}: {}", e.emit_to_string(&src)));
 
-        for (stage, entry_point, suffix) in [
-            (naga::ShaderStage::Vertex, "vs_main", "vert"),
-            (naga::ShaderStage::Fragment, "fs_main", "frag"),
-        ] {
+        for ep in &module.entry_points {
+            let (stage, entry_point) = (ep.stage, ep.name.as_str());
+            let suffix = match entry_point {
+                "vs_main" => "vert",
+                "fs_main" => "frag",
+                other => other,
+            };
             let options = naga::back::spv::Options::default();
             let pipeline = naga::back::spv::PipelineOptions {
                 shader_stage: stage,

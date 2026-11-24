@@ -16,7 +16,7 @@ impl Renderer {
         }
         // SAFETY: Neuaufbau; danach nutzt die GPU keine der alten Ressourcen mehr.
         unsafe { self.ctx.device.device_wait_idle()? };
-        let new = Swapchain::new(&self.ctx, w, h, self.swapchain.handle)?;
+        let new = Swapchain::new(&self.ctx, (w, h), self.vsync, self.swapchain.handle)?;
         std::mem::replace(&mut self.swapchain, new).destroy(&self.ctx);
         let ext = offscreen_extent(self.window_size, self.resolution);
         if ext != self.offscreen || self.wanted_samples != self.samples {
@@ -204,8 +204,24 @@ impl Renderer {
         } else {
             self.timer.collect(&self.ctx.device, fi, &mut self.stats);
             let start = Instant::now();
-            let counts = self.fill_frame(fi, f)?;
-            self.record(frame.cmd, fi, image, f, counts, cap)?;
+            if f.scene.is_some() && self.modern.is_none() {
+                let m = modern::Modern::new(&self.ctx, self.command_pool)?;
+                self.modern = Some(Box::new(m));
+            }
+            // moderne Grafik: Modelle und Figuren laufen ueber ihre eigenen Listen
+            let simple = FrameInput {
+                view: f.scene.map_or(f.view, |s| s.camera.to_view()),
+                ..*f
+            };
+            let empty = FrameInput {
+                meshes: &[],
+                ghosts: &[],
+                skins: &[],
+                camera_skins: &[],
+                ..simple
+            };
+            let counts = self.fill_frame(fi, if f.scene.is_some() { &empty } else { f })?;
+            self.record(frame.cmd, fi, image, &simple, counts, cap)?;
             self.stats.cpu_ms = start.elapsed().as_secs_f32() * 1000.0;
         }
         if present::submit_and_present(&self.ctx, &self.swapchain, frame, image_index)? {

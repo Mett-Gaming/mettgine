@@ -20,6 +20,8 @@ pub struct Context {
     pub device: ash::Device,
     pub queue: vk::Queue,
     pub swapchain_loader: ash::khr::swapchain::Device,
+    /// hoechste Filterstufe schraeg gesehener Texturen (1 = kann die Karte nicht)
+    pub max_anisotropy: f32,
     /// Name der Grafikkarte (fuer Absturzberichte)
     pub gpu_name: String,
 }
@@ -115,7 +117,7 @@ impl Context {
                             vk::PhysicalDeviceType::INTEGRATED_GPU => 2,
                             _ => 1,
                         };
-                        if best.map_or(true, |b| score > b.2) {
+                        if best.is_none_or(|b| score > b.2) {
                             best = Some((pd, i, score));
                         }
                         break;
@@ -141,6 +143,14 @@ impl Context {
                 .queue_family_index(queue_family)
                 .queue_priorities(&priorities)];
             let device_extensions = [ash::khr::swapchain::NAME.as_ptr()];
+            let can = instance.get_physical_device_features(physical);
+            let features = vk::PhysicalDeviceFeatures::default()
+                .sampler_anisotropy(can.sampler_anisotropy == vk::TRUE);
+            let max_anisotropy = if can.sampler_anisotropy == vk::TRUE {
+                props.limits.max_sampler_anisotropy
+            } else {
+                1.0
+            };
             let mut features13 =
                 vk::PhysicalDeviceVulkan13Features::default().dynamic_rendering(true);
             let device = instance.create_device(
@@ -148,6 +158,7 @@ impl Context {
                 &vk::DeviceCreateInfo::default()
                     .queue_create_infos(&queue_info)
                     .enabled_extension_names(&device_extensions)
+                    .enabled_features(&features)
                     .push_next(&mut features13),
                 None,
             )?;
@@ -167,6 +178,7 @@ impl Context {
                 device,
                 queue,
                 swapchain_loader,
+                max_anisotropy,
                 gpu_name,
             })
         }

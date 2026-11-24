@@ -92,6 +92,10 @@ impl Renderer {
                 let params = [c.fade, c.red, c.saturation, 0.0];
                 (self.pipes.post_clean, [params, [0.0; 4], [0.0; 4]])
             }
+            Post::Plain(fade) => {
+                let params = [*fade, 0.0, 0.0, 0.0];
+                (self.pipes.post_plain, [params, [0.0; 4], [0.0; 4]])
+            }
             Post::Vhs(v) => {
                 let (out, src) = (self.swapchain.extent, self.offscreen);
                 let params = [f.time, v.glitch, v.dark as u8 as f32, v.strength];

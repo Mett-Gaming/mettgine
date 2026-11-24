@@ -9,9 +9,11 @@
 //! 4. UI-Ebene (nur bei festem UI-Raster mit Videoband)
 //! 5. Nachbearbeitung aufs Fenster, UI obendrauf
 //!
+//! Mit `FrameInput::scene` laufen statt 1 bis 3 die Durchgaenge der modernen Grafik (`modern`).
+//!
 //! Dateien: `params` (Eingaben), `init`/`descriptors`/`pipelines` (Aufbau), `world` (selten
 //! geaenderte Daten), `lists` (was ist zu sehen), `draw` (ein Bild vorbereiten),
-//! `frame`/`screen` (aufnehmen), `quality` (Zuschaltbares). Darunter die Vulkan-Grundlagen.
+//! `frame`/`screen` (aufnehmen), `quality` (Zuschaltbares), `modern`/`models` (moderne Grafik). Darunter die Vulkan-Grundlagen.
 //! Shader: `shaders/`, Schnittstelle in `_common.wgsl` und `descriptors`.
 
 pub(crate) mod context;
@@ -27,6 +29,8 @@ mod draw;
 mod frame;
 mod init;
 mod lists;
+mod models;
+mod modern;
 mod params;
 mod pipelines;
 mod quality;
@@ -35,6 +39,7 @@ mod screen;
 mod tests;
 mod world;
 
+pub use modern::*;
 pub use params::*;
 pub use pipelines::WorldShaders;
 
@@ -216,12 +221,15 @@ pub struct Renderer {
     culling: bool,
     lists: DrawLists,
     timer: GpuTimer,
+    /// moderne Grafik, entsteht beim ersten Gebrauch
+    modern: Option<Box<modern::Modern>>,
     splash: Splash,
     stats: FrameStats,
     /// wiederverwendete Puffer fuer den Bild-Takt
     scratch_insts: Vec<GpuInst>,
     scratch_bones: Vec<[[f32; 4]; 4]>,
     window_size: (u32, u32),
+    vsync: bool,
     needs_recreate: bool,
     capture: Capture,
     // Muss zuletzt freigegeben werden (Drop-Reihenfolge der Felder).
@@ -273,6 +281,14 @@ impl Renderer {
         }
     }
 
+    /// Bilder an den Bildschirm binden (Vorgabe: an). Aus = so schnell wie moeglich.
+    pub fn set_vsync(&mut self, on: bool) {
+        if on != self.vsync {
+            self.vsync = on;
+            self.needs_recreate = true;
+        }
+    }
+
     /// Virtuelle UI-Flaeche (Breite, Hoehe), siehe [`UiSize`].
     pub fn ui_area(&self) -> (f32, f32) {
         match self.ui_size {
@@ -298,8 +314,11 @@ impl Drop for Renderer {
         // SAFETY: Warten auf das Geraet, danach nutzt die GPU keine der Ressourcen mehr;
         // jede wird hier genau einmal freigegeben.
         unsafe {
+            let _ = self.ctx.device.device_wait_idle();
+            if let Some(mut m) = self.modern.take() {
+                m.destroy(&self.ctx);
+            }
             let d = &self.ctx.device;
-            let _ = d.device_wait_idle();
             present::destroy_frames(d, &self.frames);
             d.destroy_command_pool(self.command_pool, None);
             let single = [

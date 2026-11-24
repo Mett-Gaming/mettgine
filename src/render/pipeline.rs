@@ -2,6 +2,7 @@
 
 use super::Result;
 use ash::vk;
+use std::ffi::CStr;
 
 /// Deckkraft halbtransparenter Figuren und Modelle ([`Blend::Ghost`])
 const GHOST_ALPHA: f32 = 0.55;
@@ -17,6 +18,8 @@ pub(crate) enum Blend {
     Ghost,
     /// Farbe ist schon mit Alpha multipliziert; Alpha 0 = reines Aufhellen (Partikel)
     Premultiplied,
+    /// dazuzaehlen (Ueberstrahlen)
+    Add,
 }
 
 impl Blend {
@@ -26,6 +29,7 @@ impl Blend {
             .color_write_mask(vk::ColorComponentFlags::RGBA);
         let (src, dst, src_a, dst_a) = match self {
             Blend::Opaque => return base,
+            Blend::Add => (F::ONE, F::ONE, F::ONE, F::ONE),
             Blend::Alpha => (
                 F::SRC_ALPHA,
                 F::ONE_MINUS_SRC_ALPHA,
@@ -58,9 +62,14 @@ impl Blend {
 /// Beschreibung einer Grafik-Pipeline.
 pub(crate) struct PipelineDesc<'a> {
     pub vs: &'a [u8],
+    /// leer = ohne Fragment-Shader (nur Tiefe)
     pub fs: &'a [u8],
+    pub vs_entry: &'a CStr,
+    pub fs_entry: &'a CStr,
     /// None = nur Tiefe (Schattenkarte)
     pub color_format: Option<vk::Format>,
+    /// weitere Farbziele hinter `color_format`
+    pub more_colors: &'a [vk::Format],
     pub depth_format: Option<vk::Format>,
     pub depth_test: bool,
     pub depth_write: bool,
@@ -70,6 +79,8 @@ pub(crate) struct PipelineDesc<'a> {
     pub samples: vk::SampleCountFlags,
     pub bindings: &'a [vk::VertexInputBindingDescription],
     pub attributes: &'a [vk::VertexInputAttributeDescription],
+    /// Rueckseiten: erst beim Zeichnen festgelegt (sonst werden beide Seiten gezeichnet)
+    pub dynamic_cull: bool,
 }
 
 pub(crate) unsafe fn create_pipeline(
@@ -78,21 +89,25 @@ pub(crate) unsafe fn create_pipeline(
     desc: &PipelineDesc,
 ) -> Result<vk::Pipeline> {
     let vs_code = ash::util::read_spv(&mut std::io::Cursor::new(desc.vs))?;
-    let fs_code = ash::util::read_spv(&mut std::io::Cursor::new(desc.fs))?;
     let vs_mod =
         d.create_shader_module(&vk::ShaderModuleCreateInfo::default().code(&vs_code), None)?;
-    let fs_mod =
-        d.create_shader_module(&vk::ShaderModuleCreateInfo::default().code(&fs_code), None)?;
-    let stages = [
+    let mut fs_mod = vk::ShaderModule::null();
+    if !desc.fs.is_empty() {
+        let code = ash::util::read_spv(&mut std::io::Cursor::new(desc.fs))?;
+        fs_mod =
+            d.create_shader_module(&vk::ShaderModuleCreateInfo::default().code(&code), None)?;
+    }
+    let all_stages = [
         vk::PipelineShaderStageCreateInfo::default()
             .stage(vk::ShaderStageFlags::VERTEX)
             .module(vs_mod)
-            .name(c"vs_main"),
+            .name(desc.vs_entry),
         vk::PipelineShaderStageCreateInfo::default()
             .stage(vk::ShaderStageFlags::FRAGMENT)
             .module(fs_mod)
-            .name(c"fs_main"),
+            .name(desc.fs_entry),
     ];
+    let stages = &all_stages[..if desc.fs.is_empty() { 1 } else { 2 }];
     let vertex_input = vk::PipelineVertexInputStateCreateInfo::default()
         .vertex_binding_descriptions(desc.bindings)
         .vertex_attribute_descriptions(desc.attributes);
@@ -112,22 +127,28 @@ pub(crate) unsafe fn create_pipeline(
         .depth_test_enable(desc.depth_test)
         .depth_write_enable(desc.depth_write)
         .depth_compare_op(desc.depth_compare);
-    let blend_attachments = [desc.blend.attachment()];
+    let color_formats: Vec<vk::Format> = desc
+        .color_format
+        .into_iter()
+        .chain(desc.more_colors.iter().copied())
+        .collect();
+    let blend_attachments = vec![desc.blend.attachment(); color_formats.len()];
     let blend = vk::PipelineColorBlendStateCreateInfo::default()
-        .attachments(if desc.color_format.is_some() {
-            &blend_attachments[..]
-        } else {
-            &[]
-        })
+        .attachments(&blend_attachments)
         .blend_constants([0.0, 0.0, 0.0, GHOST_ALPHA]);
-    let dynamic_states = [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
-    let dynamic = vk::PipelineDynamicStateCreateInfo::default().dynamic_states(&dynamic_states);
-    let color_formats: Vec<vk::Format> = desc.color_format.into_iter().collect();
+    let dynamic_states = [
+        vk::DynamicState::VIEWPORT,
+        vk::DynamicState::SCISSOR,
+        vk::DynamicState::CULL_MODE,
+    ];
+    let dynamic_count = if desc.dynamic_cull { 3 } else { 2 };
+    let dynamic = vk::PipelineDynamicStateCreateInfo::default()
+        .dynamic_states(&dynamic_states[..dynamic_count]);
     let mut rendering = vk::PipelineRenderingCreateInfo::default()
         .color_attachment_formats(&color_formats)
         .depth_attachment_format(desc.depth_format.unwrap_or(vk::Format::UNDEFINED));
     let info = vk::GraphicsPipelineCreateInfo::default()
-        .stages(&stages)
+        .stages(stages)
         .vertex_input_state(&vertex_input)
         .input_assembly_state(&input_assembly)
         .viewport_state(&viewport)
@@ -140,7 +161,7 @@ pub(crate) unsafe fn create_pipeline(
         .push_next(&mut rendering);
     let result = d.create_graphics_pipelines(vk::PipelineCache::null(), &[info], None);
     d.destroy_shader_module(vs_mod, None);
-    d.destroy_shader_module(fs_mod, None);
+    d.destroy_shader_module(fs_mod, None); // null ist erlaubt
     let pipelines = result.map_err(|(_, e)| e)?;
     Ok(pipelines[0])
 }

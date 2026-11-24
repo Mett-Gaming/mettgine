@@ -180,6 +180,10 @@ impl Splash {
             d,
             layout,
             &PipelineDesc {
+                vs_entry: c"vs_main",
+                fs_entry: c"fs_main",
+                more_colors: &[],
+                dynamic_cull: false,
                 vs: include_bytes!(concat!(env!("OUT_DIR"), "/splash.vert.spv")),
                 fs: include_bytes!(concat!(env!("OUT_DIR"), "/splash.frag.spv")),
                 color_format: Some(format),

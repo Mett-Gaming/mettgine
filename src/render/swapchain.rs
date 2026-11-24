@@ -14,7 +14,13 @@ pub struct Swapchain {
 }
 
 impl Swapchain {
-    pub fn new(ctx: &Context, width: u32, height: u32, old: vk::SwapchainKHR) -> Result<Self> {
+    /// `vsync` = an den Bildschirm gebunden (kein Zerreissen); sonst so schnell wie moeglich.
+    pub fn new(
+        ctx: &Context,
+        (width, height): (u32, u32),
+        vsync: bool,
+        old: vk::SwapchainKHR,
+    ) -> Result<Self> {
         unsafe {
             let caps = ctx
                 .surface_loader
@@ -44,6 +50,15 @@ impl Swapchain {
                         .clamp(caps.min_image_extent.height, caps.max_image_extent.height),
                 }
             };
+            let modes = ctx
+                .surface_loader
+                .get_physical_device_surface_present_modes(ctx.physical, ctx.surface)?;
+            let wanted = [vk::PresentModeKHR::MAILBOX, vk::PresentModeKHR::IMMEDIATE];
+            let free = wanted.into_iter().find(|m| modes.contains(m));
+            let present_mode = match free {
+                Some(m) if !vsync => m,
+                _ => vk::PresentModeKHR::FIFO, // gibt es immer
+            };
             let mut count = caps.min_image_count + 1;
             if caps.max_image_count > 0 {
                 count = count.min(caps.max_image_count);
@@ -72,7 +87,7 @@ impl Swapchain {
                     .image_sharing_mode(vk::SharingMode::EXCLUSIVE)
                     .pre_transform(caps.current_transform)
                     .composite_alpha(alpha)
-                    .present_mode(vk::PresentModeKHR::FIFO)
+                    .present_mode(present_mode)
                     .clipped(true)
                     .old_swapchain(old),
                 None,

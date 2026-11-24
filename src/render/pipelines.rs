@@ -12,6 +12,7 @@ macro_rules! spv {
         include_bytes!(concat!(env!("OUT_DIR"), "/", $name, ".spv"))
     };
 }
+pub(super) use spv;
 
 /// Push-Constants von Nachbearbeitung (drei vec4) und UI (ein vec4)
 pub(super) const PUSH_BYTES: u32 = 48;
@@ -77,6 +78,7 @@ pub(super) struct Pipelines {
     pub ui_layer: vk::Pipeline,
     pub post_clean: vk::Pipeline,
     pub post_vhs: vk::Pipeline,
+    pub post_plain: vk::Pipeline,
 }
 
 impl Pipelines {
@@ -88,6 +90,7 @@ impl Pipelines {
             self.ui_layer,
             self.post_clean,
             self.post_vhs,
+            self.post_plain,
         ];
         let scenes = self.scene.all().into_iter().chain(self.second.all());
         for p in scenes.chain(single) {
@@ -98,7 +101,11 @@ impl Pipelines {
     }
 }
 
-fn attr(location: u32, offset: u32, format: vk::Format) -> vk::VertexInputAttributeDescription {
+pub(super) fn attr(
+    location: u32,
+    offset: u32,
+    format: vk::Format,
+) -> vk::VertexInputAttributeDescription {
     vk::VertexInputAttributeDescription {
         location,
         binding: 0,
@@ -107,7 +114,7 @@ fn attr(location: u32, offset: u32, format: vk::Format) -> vk::VertexInputAttrib
     }
 }
 
-fn vertex_binding(stride: usize) -> [vk::VertexInputBindingDescription; 1] {
+pub(super) fn vertex_binding(stride: usize) -> [vk::VertexInputBindingDescription; 1] {
     [vk::VertexInputBindingDescription {
         binding: 0,
         stride: stride as u32,
@@ -128,15 +135,15 @@ unsafe fn layout(
     )?)
 }
 
-const F3: vk::Format = vk::Format::R32G32B32_SFLOAT;
-const F4: vk::Format = vk::Format::R32G32B32A32_SFLOAT;
+pub(super) const F3: vk::Format = vk::Format::R32G32B32_SFLOAT;
+pub(super) const F4: vk::Format = vk::Format::R32G32B32A32_SFLOAT;
 
-fn mesh_attrs() -> [vk::VertexInputAttributeDescription; 3] {
+pub(super) fn mesh_attrs() -> [vk::VertexInputAttributeDescription; 3] {
     [attr(0, 0, F3), attr(1, 12, F3), attr(2, 24, F3)]
 }
 
 /// Farbe und Tiefe der Szene, deckend.
-fn scene_desc<'a>(
+pub(super) fn scene_desc<'a>(
     vs: &'a [u8],
     fs: &'a [u8],
     bindings: &'a [vk::VertexInputBindingDescription],
@@ -145,7 +152,10 @@ fn scene_desc<'a>(
     PipelineDesc {
         vs,
         fs,
+        vs_entry: c"vs_main",
+        fs_entry: c"fs_main",
         color_format: Some(COLOR_FORMAT),
+        more_colors: &[],
         depth_format: Some(DEPTH_FORMAT),
         depth_test: true,
         depth_write: true,
@@ -154,6 +164,7 @@ fn scene_desc<'a>(
         samples: vk::SampleCountFlags::TYPE_1,
         bindings,
         attributes,
+        dynamic_cull: false,
     }
 }
 
@@ -244,7 +255,7 @@ pub(super) unsafe fn create_scene_pipelines(
 }
 
 /// Bildschirm-Pipelines: Nachbearbeitung und UI.
-fn screen_desc<'a>(
+pub(super) fn screen_desc<'a>(
     vs: &'a [u8],
     fs: &'a [u8],
     format: vk::Format,
@@ -318,6 +329,7 @@ pub(super) unsafe fn create_pipelines(
         ui_layer: ui(COLOR_FORMAT)?,
         post_clean: post(spv!("post_clean.vert"), spv!("post_clean.frag"))?,
         post_vhs: post(spv!("post_vhs.vert"), spv!("post_vhs.frag"))?,
+        post_plain: post(spv!("post_plain.vert"), spv!("post_plain.frag"))?,
         scene_layout,
         tex_layout,
     })

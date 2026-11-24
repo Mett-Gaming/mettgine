@@ -166,8 +166,7 @@ impl Renderer {
         let size = window.inner_size();
         let window_size = (size.width.max(1), size.height.max(1));
         let ctx = Context::new(window)?;
-        let swapchain =
-            Swapchain::new(&ctx, window_size.0, window_size.1, vk::SwapchainKHR::null())?;
+        let swapchain = Swapchain::new(&ctx, window_size, true, vk::SwapchainKHR::null())?;
         let offscreen = offscreen_extent(window_size, cfg.resolution);
         let samples = vk::SampleCountFlags::TYPE_1;
         let (color, depth, ms_color) = Self::make_targets(&ctx, offscreen, samples)?;
@@ -267,11 +266,13 @@ impl Renderer {
                 culling: true,
                 lists: DrawLists::default(),
                 timer,
+                modern: None,
                 splash,
                 stats: FrameStats::default(),
                 scratch_insts: Vec::with_capacity(1024),
                 scratch_bones: Vec::with_capacity(1024),
                 window_size,
+                vsync: true,
                 needs_recreate: false,
                 capture: Capture::default(),
                 ctx,

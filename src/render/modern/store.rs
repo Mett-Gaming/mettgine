@@ -1,0 +1,436 @@
+//! Modelle, Texturen und Materialien im Grafikspeicher. Nachladen geht jederzeit, ohne auf die
+//! GPU zu warten: Die Daten warten in Zwischenpuffern und werden am Anfang des naechsten Bildes
+//! kopiert; Entferntes bleibt liegen, bis kein Bild im Flug es mehr benutzt.
+
+use super::super::context::Context;
+use super::super::util::Buffer;
+use super::super::{Result, FRAMES_IN_FLIGHT};
+use super::copy::copy_image;
+use super::memory::{Arena, GpuBuffer, GpuImage, TexDesc};
+use super::model::*;
+use super::sets::MaterialSets;
+use crate::cull::Sphere;
+use ash::vk;
+use bytemuck::{Pod, Zeroable};
+
+/// Ein Modell im Grafikspeicher.
+pub struct Model {
+    pub vertices: GpuBuffer,
+    pub indices: GpuBuffer,
+    pub joints: Option<GpuBuffer>,
+    pub index_count: u32,
+    pub bounds: Sphere,
+}
+
+/// Werte eines Materials, gleich aufgebaut wie `Mat` in `_m_common.wgsl`.
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+pub struct GpuMaterial {
+    base: [f32; 4],
+    /// rgb = Eigenleuchten, w = Staerke der Normalenkarte (0 = keine)
+    emissive: [f32; 4],
+    /// Metall, Rauheit, Grenze der Loecher (0 = keine), Verdeckung an
+    params: [f32; 4],
+}
+
+impl GpuMaterial {
+    pub fn set_roughness(&mut self, r: f32) {
+        self.params[1] = r;
+    }
+}
+
+pub struct MaterialSlot {
+    pub data: Material,
+    pub set: vk::DescriptorSet,
+}
+
+/// Was nach einigen Bildern freigegeben wird.
+enum Trash {
+    Buffer(GpuBuffer),
+    Image(GpuImage),
+    Staging(Buffer),
+    Set(vk::DescriptorSet),
+}
+
+/// Ein noch ausstehender Kopiervorgang.
+enum Copy {
+    Buffer {
+        src: vk::Buffer,
+        dst: vk::Buffer,
+        size: u64,
+    },
+    Image {
+        src: vk::Buffer,
+        dst: vk::Image,
+        width: u32,
+        height: u32,
+        mips: u32,
+    },
+}
+
+/// Alles Nachladbare.
+pub struct Store {
+    pub arena: Arena,
+    models: Vec<Option<Model>>,
+    textures: Vec<Option<GpuImage>>,
+    materials: Vec<Option<MaterialSlot>>,
+    /// wird bei jeder Aenderung an Materialien groesser
+    pub version: u64,
+    pub sets: MaterialSets,
+    pending: Vec<Copy>,
+    trash: Vec<(u64, Trash)>,
+    frame: u64,
+    /// weisses Bild und flache Normale fuer fehlende Texturen
+    pub white: TextureId,
+    pub flat: TextureId,
+}
+
+fn put<T>(list: &mut Vec<Option<T>>, value: T) -> u32 {
+    match list.iter().position(Option::is_none) {
+        Some(i) => {
+            list[i] = Some(value);
+            i as u32
+        }
+        None => {
+            list.push(Some(value));
+            list.len() as u32 - 1
+        }
+    }
+}
+
+/// Anzahl Stufen bis hinunter zu einem Bildpunkt.
+pub fn mip_count(width: u32, height: u32) -> u32 {
+    width.max(height).max(1).ilog2() + 1
+}
+
+impl Store {
+    pub fn new(ctx: &Context) -> Result<Self> {
+        let mut s = Self {
+            arena: Arena::default(),
+            models: Vec::new(),
+            textures: Vec::new(),
+            materials: Vec::new(),
+            version: 1,
+            sets: MaterialSets::new(ctx)?,
+            pending: Vec::new(),
+            trash: Vec::new(),
+            frame: 0,
+            white: TextureId(0),
+            flat: TextureId(0),
+        };
+        let pixel = |rgba: [u8; 4]| TextureData {
+            width: 1,
+            height: 1,
+            rgba: rgba.to_vec(),
+            srgb: false,
+            mips: false,
+        };
+        s.white = s.add_texture(ctx, &pixel([255; 4]))?;
+        s.flat = s.add_texture(ctx, &pixel([128, 128, 255, 255]))?;
+        Ok(s)
+    }
+
+    fn throw(&mut self, t: Trash) {
+        self.trash.push((self.frame, t));
+    }
+
+    /// Daten in einen Zwischenpuffer legen, der nach der Kopie verfaellt.
+    fn stage(&mut self, ctx: &Context, bytes: &[u8]) -> Result<vk::Buffer> {
+        let usage = vk::BufferUsageFlags::TRANSFER_SRC;
+        let b = Buffer::new_host(ctx, bytes.len().max(16) as u64, usage)?;
+        b.write(bytes);
+        let handle = b.buffer;
+        self.throw(Trash::Staging(b));
+        Ok(handle)
+    }
+
+    fn upload_buffer(
+        &mut self,
+        ctx: &Context,
+        bytes: &[u8],
+        usage: vk::BufferUsageFlags,
+    ) -> Result<GpuBuffer> {
+        let dst = self.arena.buffer(ctx, bytes.len() as u64, usage)?;
+        let src = self.stage(ctx, bytes)?;
+        self.pending.push(Copy::Buffer {
+            src,
+            dst: dst.buffer,
+            size: bytes.len() as u64,
+        });
+        Ok(dst)
+    }
+
+    pub fn add_model(&mut self, ctx: &Context, m: &ModelData) -> Result<ModelId> {
+        if m.vertices.is_empty() || m.indices.is_empty() {
+            return Err("Modell ohne Dreiecke".into());
+        }
+        if m.indices.iter().any(|&i| i as usize >= m.vertices.len()) {
+            return Err("Modell verweist auf fehlende Eckpunkte".into());
+        }
+        if !m.joints.is_empty() && m.joints.len() != m.vertices.len() {
+            return Err("Modell: Knochen passen nicht zu den Eckpunkten".into());
+        }
+        let vertex = vk::BufferUsageFlags::VERTEX_BUFFER;
+        let (center, radius) = m.bounds();
+        let model = Model {
+            vertices: self.upload_buffer(ctx, bytemuck::cast_slice(&m.vertices), vertex)?,
+            indices: self.upload_buffer(
+                ctx,
+                bytemuck::cast_slice(&m.indices),
+                vk::BufferUsageFlags::INDEX_BUFFER,
+            )?,
+            joints: if m.joints.is_empty() {
+                None
+            } else {
+                Some(self.upload_buffer(ctx, bytemuck::cast_slice(&m.joints), vertex)?)
+            },
+            index_count: m.indices.len() as u32 / 3 * 3,
+            bounds: Sphere { center, radius },
+        };
+        Ok(ModelId(put(&mut self.models, model)))
+    }
+
+    pub fn add_texture(&mut self, ctx: &Context, t: &TextureData) -> Result<TextureId> {
+        let (w, h) = (t.width, t.height);
+        if w == 0 || h == 0 || t.rgba.len() as u64 != w as u64 * h as u64 * 4 {
+            return Err(format!("Textur {w}x{h}: falsche Datenmenge {}", t.rgba.len()).into());
+        }
+        let mips = if t.mips { mip_count(w, h) } else { 1 };
+        let format = if t.srgb {
+            vk::Format::R8G8B8A8_SRGB
+        } else {
+            vk::Format::R8G8B8A8_UNORM
+        };
+        let usage = vk::ImageUsageFlags::SAMPLED
+            | vk::ImageUsageFlags::TRANSFER_DST
+            | vk::ImageUsageFlags::TRANSFER_SRC;
+        let desc = TexDesc {
+            usage,
+            mips,
+            ..TexDesc::target(w, h, format)
+        };
+        let image = self.arena.image(ctx, &desc)?;
+        let src = self.stage(ctx, &t.rgba)?;
+        self.pending.push(Copy::Image {
+            src,
+            dst: image.image,
+            width: w,
+            height: h,
+            mips,
+        });
+        Ok(TextureId(put(&mut self.textures, image)))
+    }
+
+    pub fn add_material(&mut self, ctx: &Context, m: &Material) -> Result<MaterialId> {
+        let set = self.sets.alloc(ctx)?;
+        let id = put(&mut self.materials, MaterialSlot { data: *m, set });
+        self.write_material(ctx, id);
+        self.version += 1;
+        Ok(MaterialId(id))
+    }
+
+    /// Material aendern: neues Set, damit Bilder im Flug das alte behalten.
+    pub fn set_material(&mut self, ctx: &Context, id: MaterialId, m: &Material) -> Result<()> {
+        if self.material(id).is_none() {
+            return Err("unbekanntes Material".into());
+        }
+        let set = self.sets.alloc(ctx)?;
+        let new = MaterialSlot { data: *m, set };
+        if let Some(old) = self.materials[id.0 as usize].replace(new) {
+            self.throw(Trash::Set(old.set));
+        }
+        self.write_material(ctx, id.0);
+        self.version += 1;
+        Ok(())
+    }
+
+    fn write_material(&self, ctx: &Context, id: u32) {
+        let Some(Some(slot)) = self.materials.get(id as usize) else {
+            return;
+        };
+        let m = &slot.data;
+        let view = |t: Option<TextureId>, none: TextureId| {
+            t.and_then(|t| self.texture(t))
+                .or_else(|| self.texture(none))
+                .map_or(vk::ImageView::null(), |i| i.view)
+        };
+        let views = [
+            view(m.base_texture, self.white),
+            view(m.metal_rough_texture, self.white),
+            view(m.normal_texture, self.flat),
+            view(m.occlusion_texture, self.white),
+            view(m.emissive_texture, self.white),
+        ];
+        self.sets.write(ctx, slot.set, views);
+    }
+
+    /// Zahlenwerte aller Materialien, mindestens eines.
+    pub fn material_values(&self) -> Vec<GpuMaterial> {
+        self.materials
+            .iter()
+            .map(|s| {
+                let m = s.as_ref().map_or(Material::default(), |s| s.data);
+                let normal = if m.normal_texture.is_some() {
+                    m.normal_scale
+                } else {
+                    0.0
+                };
+                let cut = match m.alpha {
+                    Alpha::Mask(c) => c.max(0.001),
+                    _ => 0.0,
+                };
+                GpuMaterial {
+                    base: m.base_color.to_array(),
+                    emissive: m.emissive.extend(normal).to_array(),
+                    params: [m.metallic, m.roughness, cut, 0.0],
+                }
+            })
+            .collect()
+    }
+
+    pub fn model(&self, id: ModelId) -> Option<&Model> {
+        self.models.get(id.0 as usize)?.as_ref()
+    }
+
+    pub fn texture(&self, id: TextureId) -> Option<&GpuImage> {
+        self.textures.get(id.0 as usize)?.as_ref()
+    }
+
+    pub fn material(&self, id: MaterialId) -> Option<&MaterialSlot> {
+        self.materials.get(id.0 as usize)?.as_ref()
+    }
+
+    pub fn remove_model(&mut self, id: ModelId) {
+        if let Some(m) = self.models.get_mut(id.0 as usize).and_then(Option::take) {
+            for b in [Some(m.vertices), Some(m.indices), m.joints]
+                .into_iter()
+                .flatten()
+            {
+                self.throw(Trash::Buffer(b));
+            }
+        }
+    }
+
+    pub fn remove_material(&mut self, id: MaterialId) {
+        let slot = self.materials.get_mut(id.0 as usize);
+        if let Some(m) = slot.and_then(Option::take) {
+            self.throw(Trash::Set(m.set));
+        }
+    }
+
+    /// Textur entfernen; Materialien, die sie benutzen, werden ohne sie neu geschrieben.
+    pub fn remove_texture(&mut self, ctx: &Context, id: TextureId) -> Result<()> {
+        if id == self.white || id == self.flat {
+            return Ok(());
+        }
+        let slot = self.textures.get_mut(id.0 as usize);
+        let Some(image) = slot.and_then(Option::take) else {
+            return Ok(());
+        };
+        self.throw(Trash::Image(image));
+        let users: Vec<(u32, Material)> = self
+            .materials
+            .iter()
+            .enumerate()
+            .filter_map(|(i, s)| Some((i as u32, s.as_ref()?.data)))
+            .filter(|(_, m)| textures_of(m).contains(&Some(id)))
+            .collect();
+        for (i, mut m) in users {
+            for t in [
+                &mut m.base_texture,
+                &mut m.metal_rough_texture,
+                &mut m.normal_texture,
+                &mut m.occlusion_texture,
+                &mut m.emissive_texture,
+            ] {
+                if *t == Some(id) {
+                    *t = None;
+                }
+            }
+            self.set_material(ctx, MaterialId(i), &m)?;
+        }
+        Ok(())
+    }
+
+    /// Anfang eines Bildes: Altes freigeben, dann Ausstehendes kopieren.
+    ///
+    /// # Safety
+    /// `cmd` muss aufgenommen werden; das Bild vor `FRAMES_IN_FLIGHT` Bildern ist fertig.
+    pub unsafe fn begin_frame(&mut self, ctx: &Context, cmd: vk::CommandBuffer) {
+        self.frame += 1;
+        let done = self.frame.saturating_sub(FRAMES_IN_FLIGHT as u64 + 1);
+        let (old, keep): (Vec<_>, Vec<_>) = std::mem::take(&mut self.trash)
+            .into_iter()
+            .partition(|(f, _)| *f < done);
+        self.trash = keep;
+        for (_, t) in old {
+            self.release(ctx, t);
+        }
+        let copies = std::mem::take(&mut self.pending);
+        if copies.is_empty() {
+            return;
+        }
+        for c in &copies {
+            match *c {
+                Copy::Buffer { src, dst, size } => {
+                    let region = vk::BufferCopy::default().size(size);
+                    ctx.device.cmd_copy_buffer(cmd, src, dst, &[region]);
+                }
+                Copy::Image {
+                    src,
+                    dst,
+                    width,
+                    height,
+                    mips,
+                } => copy_image(&ctx.device, cmd, src, dst, (width, height, mips)),
+            }
+        }
+        let read = vk::MemoryBarrier::default()
+            .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
+            .dst_access_mask(vk::AccessFlags::VERTEX_ATTRIBUTE_READ | vk::AccessFlags::INDEX_READ);
+        ctx.device.cmd_pipeline_barrier(
+            cmd,
+            vk::PipelineStageFlags::TRANSFER,
+            vk::PipelineStageFlags::VERTEX_INPUT,
+            vk::DependencyFlags::empty(),
+            &[read],
+            &[],
+            &[],
+        );
+    }
+
+    unsafe fn release(&mut self, ctx: &Context, t: Trash) {
+        let d = &ctx.device;
+        match t {
+            Trash::Buffer(b) => self.arena.drop_buffer(d, &b),
+            Trash::Image(i) => self.arena.drop_image(d, &i),
+            Trash::Staging(b) => b.destroy(d),
+            Trash::Set(s) => self.sets.free(d, s),
+        }
+    }
+
+    /// # Safety
+    /// Die GPU ist untaetig.
+    pub unsafe fn destroy(&mut self, ctx: &Context) {
+        for i in 0..self.models.len() {
+            self.remove_model(ModelId(i as u32));
+        }
+        for t in std::mem::take(&mut self.textures).into_iter().flatten() {
+            self.throw(Trash::Image(t));
+        }
+        for (_, t) in std::mem::take(&mut self.trash) {
+            self.release(ctx, t);
+        }
+        self.sets.destroy(&ctx.device);
+    }
+}
+
+fn textures_of(m: &Material) -> [Option<TextureId>; 5] {
+    [
+        m.base_texture,
+        m.metal_rough_texture,
+        m.normal_texture,
+        m.occlusion_texture,
+        m.emissive_texture,
+    ]
+}

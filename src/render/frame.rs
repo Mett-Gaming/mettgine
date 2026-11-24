@@ -84,7 +84,7 @@ pub(super) fn to_readable(image: vk::Image) -> vk::ImageMemoryBarrier<'static> {
 
 impl Renderer {
     pub(super) unsafe fn record(
-        &self,
+        &mut self,
         cmd: vk::CommandBuffer,
         fi: usize,
         image: usize,
@@ -100,22 +100,64 @@ impl Renderer {
                 .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT),
         )?;
         self.timer.begin(d, cmd, fi);
-        if let Lighting::Sun(sun) = &f.lighting {
-            self.record_shadow(cmd, fi, sun, n);
-            self.timer.mark(d, cmd, fi, "Schatten");
+        if let Some(scene) = f.scene {
+            self.record_modern(cmd, fi, f, scene, n)?;
+        } else {
+            if let Lighting::Sun(sun) = &f.lighting {
+                self.record_shadow(cmd, fi, sun, n);
+                self.timer.mark(d, cmd, fi, "Schatten");
+            }
+            if self.second.enabled {
+                self.record_second(cmd, fi, f, n);
+                self.timer.mark(d, cmd, fi, "Zweite Kamera");
+            }
+            self.record_scene(cmd, fi, f, n);
+            self.timer.mark(d, cmd, fi, "Szene");
         }
-        if self.second.enabled {
-            self.record_second(cmd, fi, f, n);
-            self.timer.mark(d, cmd, fi, "Zweite Kamera");
-        }
-        self.record_scene(cmd, fi, f, n);
-        self.timer.mark(d, cmd, fi, "Szene");
+        let d = &self.ctx.device;
         self.record_screen(cmd, image, f, fi, n.ui);
         self.timer.mark(d, cmd, fi, "Nachbearbeitung");
         let target = self.swapchain.images[image];
         present::record_present(d, cmd, &self.swapchain, target, capture);
         d.end_command_buffer(cmd)?;
         Ok(())
+    }
+
+    /// Moderne Grafik statt des einfachen Szenen-Durchgangs (Ergebnis ebenfalls in `color`).
+    unsafe fn record_modern(
+        &mut self,
+        cmd: vk::CommandBuffer,
+        fi: usize,
+        f: &FrameInput,
+        scene: &SceneInput,
+        n: Counts,
+    ) -> Result<()> {
+        let mut m = self.modern.take().ok_or("moderne Grafik fehlt")?;
+        let inputs = modern::Inputs {
+            ctx: &self.ctx,
+            cmd,
+            fi,
+            extent: self.offscreen,
+            color: self.color.image,
+            color_view: self.color.view,
+            bones: &self.bone_bufs[fi],
+            particles: (self.particle_bufs[fi].buffer, n.particles),
+            mesh_vertices: self.mesh_vertex_buf.buffer,
+            mesh_ranges: &self.mesh_ranges,
+            skin_vertices: self.skin_vertex_buf.buffer,
+            skin_ranges: &self.skin_ranges,
+            mesh_bounds: &self.mesh_bounds,
+            skin_bounds: &self.skin_bounds,
+        };
+        let timer = &self.timer;
+        let d = &self.ctx.device;
+        let result = m.record(&inputs, f, scene, &mut |name| timer.mark(d, cmd, fi, name));
+        let (drawn, culled, calls) = m.counts();
+        self.stats.drawn = drawn;
+        self.stats.culled = culled;
+        self.stats.draw_calls = calls;
+        self.modern = Some(m);
+        result
     }
 
     /// Pipeline binden; `fixed` = feste Instanzen statt der beweglichen.

@@ -28,7 +28,7 @@ pub(crate) fn write_bmp(
     out.extend_from_slice(&32u16.to_le_bytes());
     out.extend_from_slice(&[0; 24]);
     for y in (0..h as usize).rev() {
-        for p in px[y * row..(y + 1) * row].chunks_exact(4) {
+        for p in px[y * row..(y + 1) * row].as_chunks::<4>().0 {
             if rgba {
                 out.extend_from_slice(&[p[2], p[1], p[0], 255]);
             } else {

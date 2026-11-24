@@ -7,7 +7,7 @@
 use crate::canvas::{alpha, Align, Canvas, BLACK, WHITE};
 
 /// Hoechstzahl gemessener Abschnitte der Grafikkarte pro Bild
-pub const MAX_PASSES: usize = 4;
+pub const MAX_PASSES: usize = 8;
 
 /// Zeit eines Abschnitts auf der Grafikkarte.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]

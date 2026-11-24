@@ -78,7 +78,9 @@ fn body<'a>(b: &'a [u8], magic: &[u8; 4], size: usize) -> Result<&'a [u8], Strin
 /// Position, Normale, Farbe (je f32[3]), Knochen und Gewichte (je f32[4]).
 pub fn parse_skin(b: &[u8]) -> Result<SkinData, String> {
     let vertices = body(b, b"K0S1", 68)?
-        .chunks_exact(68)
+        .as_chunks::<68>()
+        .0
+        .iter()
         .map(|v| {
             let f = |i: usize| f32_at(v, i * 4);
             SkinVertex {
@@ -101,7 +103,9 @@ pub fn parse_mesh(b: &[u8]) -> Result<MeshData, String> {
     let min = Vec3::new(f32_at(b, 8), f32_at(b, 12), f32_at(b, 16));
     let max = Vec3::new(f32_at(b, 20), f32_at(b, 24), f32_at(b, 28));
     let vertices = data
-        .chunks_exact(36)
+        .as_chunks::<36>()
+        .0
+        .iter()
         .map(|v| {
             let f = |i: usize| f32_at(v, i * 4);
             MeshVertex {
