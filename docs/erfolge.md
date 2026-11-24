@@ -4,7 +4,7 @@ Das Spiel sagt nur „Erfolg X ist erreicht“. Speichern, Einblenden, Ton, List
 
 ## In vier Schritten
 1. **Erfolge beschreiben** in `erfolge/erfolge.json` (siehe unten).
-2. **Ins Paket legen:** Der Ordner `erfolge` muss im Zip **neben der exe** liegen. Den Schritt im Bau-Ablauf (`.github/workflows`) und im lokalen `dist/` ergänzen. Änderungen in `.github/` braucht die Person vorher.
+2. **Ins Paket legen:** Der Ordner `erfolge` muss im Zip **neben der exe** liegen. In `spiel.toml` unter `[beilagen]` steht dafür `erfolge = "erfolge"` (siehe [pakete.md](pakete.md)).
 3. **Im Spiel melden** (siehe unten).
 4. **Prüfen:** Test, dass jede im Code benutzte Id in der Datei steht (Vorbild: `src/achievements.rs` in KASSE 0).
 

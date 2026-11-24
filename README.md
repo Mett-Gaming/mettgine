@@ -8,6 +8,7 @@ Die Engine der Mett-Gaming-Spiele, entstanden aus [KASSE 0](https://github.com/M
 | `app` | Spielgerüst: Fenster, Ereignisse, Bildtakt, Absturzfenster. Ein Spiel setzt `Game` um |
 | `time`, `input` | fester Takt; Tastatur, Maus, Controller, umstellbare Tasten |
 | `asset`, `jobs` | Spieldaten im Hintergrund laden (auch PNG, JPEG, glTF, Klang), Arbeit auf Kerne verteilen |
+| `asset::data` | Spieldaten in Paketdateien neben der exe, siehe [docs/pakete.md](docs/pakete.md). Werkzeuge: `mpak` (Format), `mettpack` (prüfen, bauen, packen) |
 | `scene`, `camera`, `nav` | Objekte mit Hierarchie, Kameraführung, Wegfindung |
 | `physics`, `ecs` | Physik (rapier) und Entity-Component-System (hecs), beide zuschaltbar |
 | `menu`, `locale`, `save`, `random` | Menüs, Übersetzungen, Spielstände, Zufall |
@@ -178,6 +179,8 @@ So bekommt jedes andere Spiel die Änderung beim nächsten `git submodule update
 **Versionen:** Wer eine Engine-Änderung pusht, setzt ein Tag `vX.Y.Z` (neue Funktion: MINOR + 1, Korrektur: PATCH + 1), damit Spiele sich auf einen Stand beziehen können.
 
 ## Lizenzen
+
+Für Spieldaten und Packen: `sha2`, `flate2`, `serde`, `serde_json`, `toml` (alle MIT oder Apache-2.0).
 
 Die Schrift-Atlanten und Modelle gehören den Spielen, nicht der Engine. Die Engine nutzt `font8x8` (MIT/Apache-2.0) für den Bitmap-Text und `png` (MIT/Apache-2.0) für das Startbild. Zuschaltbar: `gltf`, `image`, `hecs` (MIT/Apache-2.0), `rapier3d` (Apache-2.0); Klangdateien über `lewton` (MIT/Apache-2.0) und `hound` (Apache-2.0).
 
