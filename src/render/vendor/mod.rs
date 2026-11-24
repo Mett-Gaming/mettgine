@@ -5,6 +5,8 @@
 #[cfg(feature = "fsr")]
 mod fsr;
 mod library;
+#[cfg(feature = "streamline")]
+mod streamline;
 #[cfg(feature = "xess")]
 mod xess;
 
@@ -60,6 +62,17 @@ pub(crate) struct Picture {
     pub extent: vk::Extent2D,
 }
 
+/// Zusatzbilder fuer das Entrauschen (Ray Reconstruction).
+#[derive(Clone, Copy)]
+#[allow(dead_code)]
+pub(crate) struct Guides {
+    /// Farbe ohne Licht, Anteil der Spiegelung
+    pub albedo: Picture,
+    pub specular: Picture,
+    /// Normale (Welt, mit Vorzeichen), Rauheit
+    pub normal: Picture,
+}
+
 /// Ein Auftrag. Eingaben liegen in `SHADER_READ_ONLY_OPTIMAL`, das Ziel in `GENERAL`.
 #[derive(Clone, Copy)]
 #[allow(dead_code)]
@@ -74,6 +87,8 @@ pub(crate) struct Job {
     /// 0..1: Stellen ohne verlaessliche Bewegung
     pub reactive: Option<Picture>,
     pub output: Picture,
+    /// Szene ist verrauscht: diese Bilder helfen beim Entrauschen
+    pub guides: Option<Guides>,
     /// Versatz der Kamera: so viele Bildpunkte wandert das Bild nach rechts und unten
     pub jitter: Vec2,
     /// vergangene Zeit (Sekunden)
@@ -88,6 +103,11 @@ pub(crate) struct Job {
 pub(crate) trait Backend {
     /// Name samt Version.
     fn name(&self) -> String;
+
+    /// Kann die Technik auch entrauschen?
+    fn denoises(&self) -> bool {
+        false
+    }
 
     /// Befehle aufnehmen. Bei geaenderten Groessen darf gewartet werden.
     ///
@@ -107,6 +127,8 @@ pub(crate) struct Vendors {
     fsr: Option<fsr::Api>,
     #[cfg(feature = "xess")]
     xess: Option<xess::Api>,
+    #[cfg(feature = "streamline")]
+    streamline: Option<streamline::Api>,
 }
 
 impl Vendors {
@@ -123,6 +145,11 @@ impl Vendors {
                 .contains(&Upscaler::Xess)
                 .then(xess::Api::load)
                 .flatten(),
+            #[cfg(feature = "streamline")]
+            streamline: wanted
+                .contains(&Upscaler::Dlss)
+                .then(streamline::Api::load)
+                .flatten(),
         }
     }
 
@@ -137,7 +164,28 @@ impl Vendors {
         {
             any |= self.xess.is_some();
         }
+        #[cfg(feature = "streamline")]
+        {
+            any |= self.streamline.is_some();
+        }
         any
+    }
+
+    /// Bibliothek, aus der Vulkan geladen werden soll (None = wie ueblich).
+    pub fn vulkan(&self) -> Option<std::path::PathBuf> {
+        #[cfg(feature = "streamline")]
+        if self.streamline.is_some() {
+            return streamline::vulkan_path();
+        }
+        None
+    }
+
+    /// Vor dem Freigeben des Geraets, wenn alle Techniken weg sind.
+    pub fn stop(&mut self) {
+        #[cfg(feature = "streamline")]
+        if let Some(s) = self.streamline.take() {
+            s.stop();
+        }
     }
 
     /// Zusaetzliche Erweiterungen der Instanz.
@@ -195,6 +243,8 @@ impl Vendors {
             Upscaler::Fsr => self.fsr.as_ref().and_then(|a| a.create(ctx)),
             #[cfg(feature = "xess")]
             Upscaler::Xess => self.xess.as_ref().and_then(|a| a.create(ctx)),
+            #[cfg(feature = "streamline")]
+            Upscaler::Dlss => self.streamline.as_ref().and_then(|a| a.create(ctx)),
             _ => None,
         }
     }

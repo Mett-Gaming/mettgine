@@ -54,7 +54,10 @@ impl Context {
     /// `want` = zuschaltbare Teile, soweit die Karte sie kann.
     pub fn new(window: &Window, want: device::Want, vendors: &Vendors) -> Result<Self> {
         unsafe {
-            let entry = ash::Entry::load()?;
+            let entry = match vendors.vulkan() {
+                Some(path) => ash::Entry::load_from(path)?,
+                None => ash::Entry::load()?,
+            };
             let display = window.display_handle()?.as_raw();
             let win = window.window_handle()?.as_raw();
 

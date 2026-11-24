@@ -63,6 +63,7 @@ impl Upscale {
             }
         }
         self.made.clear();
+        self.vendors.stop();
     }
 }
 
@@ -131,6 +132,7 @@ impl Modern {
             motion: picture(&t.motion, MOTION, i.extent),
             reactive: t.reactive.as_ref().map(|r| picture(r, REACTIVE, i.extent)),
             output: picture(out, HDR, i.out),
+            guides: None,
             // so viele Bildpunkte wandert die Szene nach rechts und unten
             jitter: Vec2::new(jitter.x, -jitter.y),
             dt: s.dt,

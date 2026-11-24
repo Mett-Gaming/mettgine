@@ -46,8 +46,9 @@ physics = ["dep:rapier3d"]
 # Hochskalieren mit Techniken der Hersteller; die DLLs liegen neben der exe (siehe docs/hochskalieren.md)
 fsr = []
 xess = []
+streamline = []
 # alles
-full = ["fsr", "xess", "mett-net", "gltf", "images", "audio-files", "ecs", "physics"]
+full = ["fsr", "xess", "streamline", "mett-net", "gltf", "images", "audio-files", "ecs", "physics"]
 
 [[example]]
 name = "modern"
