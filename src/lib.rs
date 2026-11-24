@@ -41,6 +41,8 @@ pub mod menu;
 pub mod nav;
 pub mod net;
 pub mod particles;
+#[cfg(feature = "physics")]
+pub mod physics;
 pub mod presence;
 pub mod profile;
 pub mod random;
