@@ -27,6 +27,11 @@ gltf = { version = "1.4", optional = true, default-features = false, features = 
 # Bilder (asset::image)
 image = { version = "0.25", optional = true, default-features = false, features = ["png", "jpeg"] }
 
+# Physik (physics)
+rapier3d = { version = "0.36", optional = true }
+# Entity-Component-System (ecs)
+hecs = { version = "0.11", optional = true }
+
 [features]
 # Was ohne weitere Angaben dabei ist. Alles andere schaltet ein Spiel in seiner Cargo.toml ein:
 # mettgine = { path = "mettgine", features = ["gltf"] }
@@ -34,8 +39,12 @@ default = ["mett-net"]
 mett-net = ["dep:mett-net"]
 images = ["dep:image"]
 gltf = ["dep:gltf", "images"]
+# Klangdateien (audio::mixer::decode)
+audio-files = ["rodio/wav", "rodio/vorbis", "rodio/symphonia-mp3"]
+ecs = ["dep:hecs"]
+physics = ["dep:rapier3d"]
 # alles
-full = ["mett-net", "gltf", "images"]
+full = ["mett-net", "gltf", "images", "audio-files", "ecs", "physics"]
 
 [build-dependencies]
 naga = { version = "24", features = ["wgsl-in", "spv-out"] }

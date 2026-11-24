@@ -132,6 +132,16 @@ impl AnimSet {
         self.clips.get(index).or(self.clips.last())
     }
 
+    /// Dauer des Clips mit dieser Nummer (Sekunden).
+    pub fn clip_seconds(&self, index: usize) -> f32 {
+        self.clip(index).map_or(0.0, |c| c.frames as f32 / c.fps)
+    }
+
+    /// Nummer eines Clips nach Namen.
+    pub fn clip_index(&self, name: &str) -> Option<usize> {
+        self.clip_names.iter().position(|n| n == name)
+    }
+
     /// Dauer eines Clips in Sekunden (0 = die Datei hat keine Clips).
     pub fn duration<C: ClipId>(&self, clip: C) -> f32 {
         self.clip(clip.index())
@@ -261,9 +271,11 @@ impl AnimSet {
 
 mod animator;
 mod file;
+mod graph;
 mod look;
 pub use animator::Animator;
 pub use file::parse_anim;
+pub use graph::{AnimState, Mask, Pose, StateMachine};
 use look::look_towards;
 
 #[cfg(test)]

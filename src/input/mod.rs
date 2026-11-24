@@ -195,6 +195,11 @@ impl Input {
         }
     }
 
+    /// Mausknopf melden (Tests, eigene Quellen).
+    pub fn press_mouse(&mut self, button: MouseButton, down: bool) {
+        self.set(Bind::Mouse(button), down);
+    }
+
     /// Rohe Mausbewegung melden (Geraete-Ereignis).
     pub fn mouse_moved(&mut self, dx: f32, dy: f32) {
         self.mouse.0 += dx;

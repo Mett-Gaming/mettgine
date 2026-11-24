@@ -85,8 +85,12 @@ impl Grid {
 
     /// Kisten sperren, um `margin` (Koerperradius) vergroessert.
     pub fn block_rect(&mut self, min: Vec2, max: Vec2, margin: f32) {
-        let a = ((min - margin - self.origin) / self.cell).floor().max(Vec2::ZERO);
-        let b = ((max + margin - self.origin) / self.cell).ceil().max(Vec2::ZERO);
+        let a = ((min - margin - self.origin) / self.cell)
+            .floor()
+            .max(Vec2::ZERO);
+        let b = ((max + margin - self.origin) / self.cell)
+            .ceil()
+            .max(Vec2::ZERO);
         for z in a.y as usize..(b.y as usize).min(self.h) {
             for x in a.x as usize..(b.x as usize).min(self.w) {
                 self.set_cost((x, z), BLOCKED);
@@ -325,7 +329,11 @@ impl Follower {
     /// erreicht. `None` = am Ziel.
     pub fn steer(&mut self, pos: Vec3, reach: f32, dt: f32) -> Option<Vec3> {
         let moved = Vec2::new(pos.x - self.last.x, pos.z - self.last.z).length();
-        self.stuck = if moved < reach * 0.02 { self.stuck + dt } else { 0.0 };
+        self.stuck = if moved < reach * 0.02 {
+            self.stuck + dt
+        } else {
+            0.0
+        };
         self.last = pos;
         while let Some(p) = self.path.get(self.next) {
             let d = Vec3::new(p.x - pos.x, 0.0, p.z - pos.z);
@@ -380,7 +388,9 @@ mod tests {
     fn unreachable_goals_have_no_path() {
         let mut g = grid();
         g.block_rect(Vec2::new(4.5, 8.0), Vec2::new(5.5, 10.0), 0.0);
-        assert!(g.path(Vec3::new(2.0, 0.0, 2.0), Vec3::new(8.0, 0.0, 2.0)).is_none());
+        assert!(g
+            .path(Vec3::new(2.0, 0.0, 2.0), Vec3::new(8.0, 0.0, 2.0))
+            .is_none());
         let f = g.distance_field(&[g.cell_at(Vec3::new(8.0, 0.0, 2.0)).unwrap()]);
         assert!(f.distance(&g, Vec3::new(2.0, 0.0, 2.0)).is_none());
     }
@@ -420,7 +430,9 @@ mod tests {
         for z in 0..8 {
             g.set_cost((4, z), 20);
         }
-        let path = g.path(Vec3::new(0.5, 0.0, 4.5), Vec3::new(8.5, 0.0, 4.5)).unwrap();
+        let path = g
+            .path(Vec3::new(0.5, 0.0, 4.5), Vec3::new(8.5, 0.0, 4.5))
+            .unwrap();
         assert!(path.iter().any(|p| p.z > 7.5), "{path:?}");
     }
 }

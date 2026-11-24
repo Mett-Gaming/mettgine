@@ -6,6 +6,8 @@
 //! - `app`: Spielgeruest (Fenster, Ereignisse, Bildtakt). `time`: fester Takt.
 //! - `shapes`: einfache Formen als Modelle.
 //! - `asset`, `jobs`: Spieldaten im Hintergrund laden, Arbeit verteilen.
+//! - `scene` (Objekte mit Hierarchie), `camera`, `nav` (Wege), `random`, `save`, `locale`,
+//!   `menu`, `debug` (Linien, Konsole, Messung); mit Features `ecs` und `physics`.
 //! - `collide`: Kollision und Strahlen. `profile`: Messanzeige.
 //! - `audio`, `input`, `canvas`, `text`, `settings`: Klang, Eingabe, Menues, Einstellungen.
 //! - `presence`: Status fuer den Mett Launcher (Discord-Anzeige).
@@ -22,19 +24,29 @@ pub mod anim;
 pub mod app;
 pub mod asset;
 pub mod audio;
+pub mod camera;
 pub mod canvas;
 pub mod collide;
 pub mod crash;
 pub mod crash_window;
 pub mod cull;
+#[cfg(feature = "ecs")]
+pub use hecs as ecs;
+pub mod debug;
 pub mod gpu;
 pub mod input;
 pub mod jobs;
+pub mod locale;
+pub mod menu;
+pub mod nav;
 pub mod net;
 pub mod particles;
 pub mod presence;
 pub mod profile;
+pub mod random;
 pub mod render;
+pub mod save;
+pub mod scene;
 pub mod settings;
 pub mod shapes;
 mod splash;

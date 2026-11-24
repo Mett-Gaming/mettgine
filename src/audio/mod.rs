@@ -4,10 +4,12 @@
 //!   Ohne Ausgabegeraet bleibt alles still (kein Fehler).
 //! - [`Sound`]: Mono-Samples bei [`RATE`]; [`synth`] baut Toene, Rauschen und Huellkurven.
 //!
+//! - [`mixer`]: Gruppen, Spuren mit Ueberblenden und Tempo, Klangdateien (Feature `audio-files`).
 //! - [`spatial`]: Klaenge mit Ort in der Welt ([`Audio::play_at`], [`Audio::start_loop`]).
 //!
 //! Welche Klaenge es gibt, legt das Spiel fest.
 
+pub mod mixer;
 pub mod spatial;
 pub mod synth;
 
@@ -64,6 +66,7 @@ pub struct Audio {
     spatial: Vec<SpatialVoice>,
     listener: Listener,
     next_id: u64,
+    mixer: mixer::Mixer,
     /// Gesamtlautstaerke 0..1
     pub volume: f32,
     /// Musiklautstaerke 0..1 (zusaetzlich zur Gesamtlautstaerke)
@@ -93,6 +96,7 @@ impl Audio {
             spatial: Vec::new(),
             listener: Listener::default(),
             next_id: 0,
+            mixer: mixer::Mixer::default(),
             volume,
             music_volume,
         }
@@ -225,6 +229,7 @@ impl Audio {
         for v in &self.spatial {
             v.ctl.set(&self.mix(&v.emitter));
         }
+        self.update_tracks(0.0);
     }
 }
 

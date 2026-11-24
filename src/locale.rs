@@ -51,7 +51,11 @@ impl Locale {
     /// Sprache waehlen; `false` = gibt es nicht. `de-AT` faellt auf `de` zurueck.
     pub fn set(&mut self, language: &str) -> bool {
         let short = language.split(['-', '_']).next().unwrap_or(language);
-        let find = |n: &str| self.languages.iter().position(|l| l.0.eq_ignore_ascii_case(n));
+        let find = |n: &str| {
+            self.languages
+                .iter()
+                .position(|l| l.0.eq_ignore_ascii_case(n))
+        };
         match find(language).or_else(|| find(short)) {
             Some(i) => {
                 self.current = i;
@@ -118,12 +122,18 @@ mod tests {
 
     #[test]
     fn texts_fall_back_and_placeholders_are_filled() {
-        let mut l = Locale::new("de", "# Menue\nstart = Los\\ngeht's\nrest = {a} von {b}, {c}\n");
+        let mut l = Locale::new(
+            "de",
+            "# Menue\nstart = Los\\ngeht's\nrest = {a} von {b}, {c}\n",
+        );
         l.add("en", "start = Go");
         assert!(l.set("en-US") && l.current() == "en");
         assert!(!l.set("fr") && l.current() == "en");
         assert_eq!(l.text("start"), "Go");
-        assert_eq!(l.with("rest", &[("a", "1"), ("b", "{a}")]), "1 von {a}, {c}");
+        assert_eq!(
+            l.with("rest", &[("a", "1"), ("b", "{a}")]),
+            "1 von {a}, {c}"
+        );
         assert_eq!(l.text("fehlt"), "fehlt");
         assert_eq!(l.missing("en"), ["rest"]);
         assert!(l.set("de"));
