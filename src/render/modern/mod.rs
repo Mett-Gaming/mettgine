@@ -29,9 +29,13 @@ mod sets;
 mod store;
 mod targets;
 mod types;
+mod upscale;
 
 pub(crate) use post::record_images;
+pub(crate) use upscale::Upscale;
 
+/// verschiedene Kamera-Versaetze des eigenen TAA
+const JITTERS: u64 = 32;
 /// Bilder der Oberflaeche je Bild
 pub const MAX_UI_IMAGES: usize = sets::IMAGE_SETS;
 
@@ -127,6 +131,8 @@ pub(crate) struct Modern {
     cube: ModelId,
     /// laufende Bildnummer
     number: u64,
+    /// Kamera-Versatz dieses Bildes (Bildpunkte)
+    jitter: Vec2,
     prev_view_proj: Option<Mat4>,
     /// Verlauf (TAA, Belichtung) ist brauchbar
     history_valid: bool,
@@ -224,6 +230,7 @@ impl Modern {
             plain_material,
             cube,
             number: 0,
+            jitter: Vec2::ZERO,
             prev_view_proj: None,
             history_valid: false,
             ping: 0,
@@ -255,9 +262,9 @@ impl Modern {
     }
 
     /// Sichten berechnen, Objekte sortieren, Puffer fuellen, Sets schreiben.
-    fn prepare(&mut self, i: &Inputs, f: &FrameInput, s: &SceneInput) -> Result<()> {
+    fn prepare(&mut self, i: &Inputs, f: &FrameInput, s: &SceneInput, wants: Wants) -> Result<()> {
         self.convert_meshes(i)?;
-        self.ensure_targets(i.ctx, Wants::new(i.out, &s.features))?;
+        self.ensure_targets(i.ctx, wants)?;
         if s.cut {
             self.history_valid = false;
             self.motion.forget();
@@ -282,11 +289,17 @@ impl Modern {
         self.views.decals = self.lists.decals(s.decals, self.cube.0);
         self.views.blend = self.lists.blended(&vp, cam.pos);
         self.clusters.build(cam, lights);
-        let jitter = if s.features.anti_alias == AntiAlias::Taa {
-            gpu::jitter(self.number)
+        let phases = if wants.vendor {
+            super::vendor::jitter_phases(wants.width, wants.out_width)
+        } else {
+            JITTERS
+        };
+        let jitter = if wants.temporal() {
+            gpu::jitter(self.number, phases)
         } else {
             Vec2::ZERO
         };
+        self.jitter = jitter;
         let tiles: Vec<gpu::GpuTile> = self.tiles.iter().map(atlas::Tile::gpu).collect();
         let scene = GpuScene::new(
             s,
@@ -431,6 +444,7 @@ impl Modern {
         i: &mut Inputs,
         f: &FrameInput,
         s: &SceneInput,
+        upscale: &mut Upscale,
         mark: &mut dyn FnMut(&'static str),
     ) -> Result<()> {
         // Strahlen nur, wenn die Karte sie kann
@@ -440,10 +454,14 @@ impl Modern {
             limited.features.path_tracing = None;
         }
         let s = &limited;
-        i.extent = Wants::new(i.out, &s.features).scene();
+        let vendor = upscale.ready(i.ctx, s.features.upscaler);
+        let wants = Wants::new(i.out, &s.features, vendor);
+        i.extent = wants.scene();
         let i = &*i;
         let same_camera = self.prev_view_proj == Some(s.camera.view_proj());
-        self.prepare(i, f, s)?;
+        let old = self.prev_view_proj.filter(|_| !s.cut);
+        let old = old.unwrap_or_else(|| s.camera.view_proj());
+        self.prepare(i, f, s, wants)?;
         self.store.begin_frame(i.ctx, i.cmd);
         self.record_shadows(i);
         mark("Schatten");
@@ -459,9 +477,15 @@ impl Modern {
         }
         mark("Beleuchtung");
         let used = post.used;
+        let jitter = self.jitter;
         let mut post = post::Post::new(self, i, s);
         post.used = used;
-        post.finish();
+        post.reactive_mask();
+        let hdr = match self.upscale(i, s, upscale, (old, jitter)) {
+            Some(view) => view,
+            None => post.taa(),
+        };
+        post.finish(hdr);
         mark("Nachbearbeitung HDR");
         self.motion.finish(f, s);
         self.history_valid = true;

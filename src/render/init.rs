@@ -165,6 +165,7 @@ impl Renderer {
     pub fn new(window: &Window, cfg: &Config) -> Result<Self> {
         let size = window.inner_size();
         let window_size = (size.width.max(1), size.height.max(1));
+        let vendors = vendor::Vendors::load(cfg.upscalers);
         let ctx = Context::new(
             window,
             device::Want {
@@ -173,6 +174,7 @@ impl Renderer {
                 diagnostics: cfg.diagnostics,
                 hdr: cfg.hdr_output,
             },
+            &vendors,
         )?;
         let latency = Latency::new(&ctx)?;
         let swapchain = Swapchain::new(
@@ -306,6 +308,7 @@ impl Renderer {
                 needs_recreate: false,
                 capture: Capture::default(),
                 latency,
+                upscale: modern::Upscale::new(vendors, cfg.upscalers),
                 hdr,
                 memory_in: 0,
                 ctx,

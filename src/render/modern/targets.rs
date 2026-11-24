@@ -16,6 +16,8 @@ pub const NORMAL: vk::Format = vk::Format::R16G16B16A16_SFLOAT;
 pub const MOTION: vk::Format = vk::Format::R16G16_SFLOAT;
 /// r = Verdeckung, g = Sonnenschatten aus Strahlen
 pub const AO: vk::Format = vk::Format::R8G8_UNORM;
+/// Stellen ohne verlaessliche Bewegung
+pub const REACTIVE: vk::Format = vk::Format::R8_UNORM;
 pub const EXPOSURE: vk::Format = vk::Format::R16_SFLOAT;
 /// Stufen des Ueberstrahlens
 const BLOOM_LEVELS: u32 = 6;
@@ -36,6 +38,8 @@ pub struct Wants {
     pub bloom: bool,
     pub taa: bool,
     pub fxaa: bool,
+    /// Technik eines Herstellers uebernimmt Glaettung und Hochskalieren
+    pub vendor: bool,
     /// Strahlen: Streulicht, Spiegelung oder Pathtracing
     pub rays: bool,
 }
@@ -49,7 +53,13 @@ impl Wants {
         }
     }
 
-    pub fn new(extent: vk::Extent2D, f: &Features) -> Self {
+    /// Wird das Bild ueber mehrere Bilder zusammengesetzt (Kamera-Versatz, Bewegung)?
+    pub fn temporal(&self) -> bool {
+        self.taa || self.vendor
+    }
+
+    /// `vendor` = die gewuenschte Technik steht bereit.
+    pub fn new(extent: vk::Extent2D, f: &Features, vendor: bool) -> Self {
         let k = f.render_scale.clamp(0.33, 1.0);
         let scaled = |v: u32| ((v as f32 * k).round() as u32).max(8);
         Self {
@@ -61,8 +71,9 @@ impl Wants {
             lamps: f.lamp_shadows,
             ssao: f.ssao.is_some() || f.ray_tracing.sun_shadows || f.ray_tracing.occlusion,
             bloom: f.bloom.is_some(),
-            taa: f.anti_alias == AntiAlias::Taa,
-            fxaa: f.anti_alias == AntiAlias::Fxaa || f.sharpen > 0.0,
+            taa: !vendor && f.anti_alias == AntiAlias::Taa,
+            fxaa: (!vendor && f.anti_alias == AntiAlias::Fxaa) || f.sharpen > 0.0,
+            vendor,
             rays: f.ray_tracing.indirect || f.ray_tracing.reflections || f.path_tracing.is_some(),
         }
     }
@@ -80,6 +91,11 @@ pub struct Targets {
     pub lamps: Option<GpuImage>,
     pub ao: Option<[GpuImage; 2]>,
     pub history: Option<[GpuImage; 2]>,
+    /// Ergebnis der Technik eines Herstellers
+    pub upscaled: Option<GpuImage>,
+    /// Szene ohne Halbtransparentes und die Maske daraus
+    pub opaque: Option<GpuImage>,
+    pub reactive: Option<GpuImage>,
     pub bloom: Vec<(GpuImage, vk::Extent2D)>,
     pub ldr: Option<GpuImage>,
     pub rays: Option<RayTargets>,
@@ -105,7 +121,31 @@ impl RayTargets {
 impl Targets {
     pub fn new(ctx: &Context, arena: &mut Arena, w: Wants, ldr: vk::Format) -> Result<Self> {
         let mut color = |format| arena.image(ctx, &TexDesc::target(w.width, w.height, format));
-        let (hdr, normal, motion) = (color(HDR)?, color(NORMAL)?, color(MOTION)?);
+        let (normal, motion) = (color(NORMAL)?, color(MOTION)?);
+        let mut hdr = TexDesc::target(w.width, w.height, HDR);
+        let mut copy = hdr;
+        if w.vendor {
+            hdr.usage |= vk::ImageUsageFlags::TRANSFER_SRC;
+        }
+        copy.usage |= vk::ImageUsageFlags::TRANSFER_DST;
+        let hdr = arena.image(ctx, &hdr)?;
+        let (opaque, reactive) = if w.vendor {
+            let mask = TexDesc::target(w.width, w.height, REACTIVE);
+            (
+                Some(arena.image(ctx, &copy)?),
+                Some(arena.image(ctx, &mask)?),
+            )
+        } else {
+            (None, None)
+        };
+        let upscaled = if w.vendor {
+            let mut desc = TexDesc::target(w.out_width, w.out_height, HDR);
+            desc.usage |= vk::ImageUsageFlags::STORAGE;
+            Some(arena.image(ctx, &desc)?)
+        } else {
+            None
+        };
+        let mut color = |format| arena.image(ctx, &TexDesc::target(w.width, w.height, format));
         let ao = if w.ssao {
             Some([color(AO)?, color(AO)?])
         } else {
@@ -167,6 +207,9 @@ impl Targets {
             lamps,
             ao,
             history,
+            upscaled,
+            opaque,
+            reactive,
             bloom,
             ldr,
             rays,
@@ -179,6 +222,8 @@ impl Targets {
         let always = [&self.hdr, &self.depth, &self.normal, &self.motion];
         let pairs = self.ao.iter().chain(&self.history).flatten();
         let single = self.sun.iter().chain(&self.lamps).chain(&self.ldr);
+        let vendor = self.upscaled.iter().chain(&self.opaque);
+        let single = single.chain(vendor.chain(&self.reactive));
         let levels = self.bloom.iter().map(|b| &b.0);
         for i in self.rays.iter().flat_map(RayTargets::all) {
             arena.drop_image(d, i);

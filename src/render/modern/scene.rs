@@ -114,6 +114,53 @@ fn depth_att(
         .clear_value(depth_clear())
 }
 
+/// Szenenbild (gerade Farbziel) in ein zweites Bild kopieren, das danach gelesen wird.
+unsafe fn copy_scene(
+    d: &ash::Device,
+    cmd: vk::CommandBuffer,
+    from: vk::Image,
+    to: vk::Image,
+    extent: vk::Extent2D,
+) {
+    use vk::{AccessFlags as A, ImageLayout as L, PipelineStageFlags as S};
+    let color = vk::ImageAspectFlags::COLOR;
+    let (out, copy) = (S::COLOR_ATTACHMENT_OUTPUT, S::TRANSFER);
+    let (target, src, dst) = (
+        L::COLOR_ATTACHMENT_OPTIMAL,
+        L::TRANSFER_SRC_OPTIMAL,
+        L::TRANSFER_DST_OPTIMAL,
+    );
+    let draw = A::COLOR_ATTACHMENT_READ | A::COLOR_ATTACHMENT_WRITE;
+    let before = [
+        image_barrier(from, color, target, src, draw, A::TRANSFER_READ),
+        image_barrier(to, color, L::UNDEFINED, dst, A::empty(), A::TRANSFER_WRITE),
+    ];
+    barrier(d, cmd, (out | S::FRAGMENT_SHADER, copy), &before);
+    let layers = vk::ImageSubresourceLayers {
+        aspect_mask: color,
+        mip_level: 0,
+        base_array_layer: 0,
+        layer_count: 1,
+    };
+    let region = vk::ImageCopy::default()
+        .src_subresource(layers)
+        .dst_subresource(layers)
+        .extent(extent.into());
+    d.cmd_copy_image(cmd, from, src, to, dst, &[region]);
+    let after = [
+        image_barrier(from, color, src, target, A::TRANSFER_READ, draw),
+        image_barrier(
+            to,
+            color,
+            dst,
+            L::SHADER_READ_ONLY_OPTIMAL,
+            A::TRANSFER_WRITE,
+            A::SHADER_READ,
+        ),
+    ];
+    barrier(d, cmd, (copy, out | S::FRAGMENT_SHADER), &after);
+}
+
 impl Modern {
     /// Zeichenbefehle aufnehmen, Zustand nur bei Wechsel setzen.
     unsafe fn draw(&self, i: &Inputs, stage: Stage, batches: &[Batch]) {
@@ -307,7 +354,7 @@ impl Modern {
         self.bind_frame(i, 0);
         self.draw(i, Stage::Pre, self.batches(&self.views.camera));
         // nur wer den Verlauf nutzt, braucht die Bewegung des Himmels
-        if t.wants.taa {
+        if t.wants.temporal() {
             d.cmd_bind_pipeline(cmd, GFX, self.pipes.sky_move);
             self.bind_any_material(i);
             d.cmd_draw(cmd, 3, 1, 0, 0);
@@ -352,6 +399,20 @@ impl Modern {
         d.cmd_bind_pipeline(cmd, GFX, self.pipes.sky);
         self.bind_any_material(i);
         d.cmd_draw(cmd, 3, 1, 0, 0);
+        if let Some(opaque) = &t.opaque {
+            d.cmd_end_rendering(cmd);
+            copy_scene(d, cmd, t.hdr.image, opaque.image, i.extent);
+            let colors = [color_att(t.hdr.view, vk::AttachmentLoadOp::LOAD)];
+            d.cmd_begin_rendering(
+                cmd,
+                &vk::RenderingInfo::default()
+                    .render_area(area(i.extent))
+                    .layer_count(1)
+                    .color_attachments(&colors)
+                    .depth_attachment(&depth),
+            );
+            set_viewport(d, cmd, i.extent);
+        }
         self.bind_frame(i, 2);
         self.mark_blended(i, true);
         self.record_decals(i);

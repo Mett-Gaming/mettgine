@@ -2,6 +2,7 @@
 
 use super::diagnostics::Diagnostics;
 use super::latency::{self, Support};
+use super::vendor::Vendors;
 use super::Result;
 use ash::vk;
 use std::ffi::CStr;
@@ -145,6 +146,7 @@ pub unsafe fn create(
     physical: vk::PhysicalDevice,
     queue_family: u32,
     want: Want,
+    vendors: &Vendors,
 ) -> Result<Made> {
     let ext = Extensions::of(instance, physical);
     let props = instance.get_physical_device_properties(physical);
@@ -188,6 +190,47 @@ pub unsafe fn create(
         .shader_sampled_image_array_non_uniform_indexing(use_rt)
         .descriptor_binding_partially_bound(use_rt)
         .timeline_semaphore(plan.reflex);
+    let mut v11 = vk::PhysicalDeviceVulkan11Features::default();
+    let mut matrix = vk::PhysicalDeviceCooperativeMatrixFeaturesKHR::default();
+    let mut all = vk::PhysicalDeviceFeatures2::default().features(features);
+    // Techniken der Hersteller setzen viel voraus: alles einschalten, was die Karte kann
+    let more = if vendors.any() {
+        vendors.device_extensions(instance, physical)
+    } else {
+        Vec::new()
+    };
+    let full = vendors.any();
+    let use_matrix = full && ext.has(ash::khr::cooperative_matrix::NAME);
+    if full {
+        let mut q = vk::PhysicalDeviceFeatures2::default()
+            .push_next(&mut v11)
+            .push_next(&mut v12)
+            .push_next(&mut features13);
+        if use_matrix {
+            q = q.push_next(&mut matrix);
+        }
+        instance.get_physical_device_features2(physical, &mut q);
+        all.features = q.features;
+        all.features.robust_buffer_access = vk::FALSE;
+        v11.protected_memory = vk::FALSE;
+        v12.buffer_device_address_capture_replay = vk::FALSE;
+        for p in [
+            &mut v11.p_next,
+            &mut v12.p_next,
+            &mut features13.p_next,
+            &mut matrix.p_next,
+        ] {
+            *p = std::ptr::null_mut();
+        }
+        let wanted = more.iter().map(|e| e.as_c_str());
+        let wanted = wanted.chain(use_matrix.then_some(ash::khr::cooperative_matrix::NAME));
+        let wanted: Vec<_> = wanted.collect();
+        for e in wanted {
+            if ext.has(e) && !names.iter().any(|n| CStr::from_ptr(*n) == e) {
+                names.push(e.as_ptr());
+            }
+        }
+    }
     let mut accel =
         vk::PhysicalDeviceAccelerationStructureFeaturesKHR::default().acceleration_structure(true);
     let mut query = vk::PhysicalDeviceRayQueryFeaturesKHR::default().ray_query(true);
@@ -198,9 +241,14 @@ pub unsafe fn create(
     let mut info = vk::DeviceCreateInfo::default()
         .queue_create_infos(&queue_info)
         .enabled_extension_names(&names)
-        .enabled_features(&features)
         .push_next(&mut features13);
-    if use_rt || plan.reflex {
+    if full {
+        info = info.push_next(&mut v11);
+        if use_matrix {
+            info = info.push_next(&mut matrix);
+        }
+    }
+    if use_rt || plan.reflex || full {
         info = info.push_next(&mut v12);
     }
     if use_rt {
@@ -217,6 +265,14 @@ pub unsafe fn create(
     }
     if fault {
         info = info.push_next(&mut device_fault);
+    }
+    if full {
+        // Faehigkeiten als Kettenanfang, damit die Bibliotheken sie ergaenzen koennen
+        info = info.push_next(&mut all);
+        let head = vendors.patch_features(instance, physical, info.p_next as *mut _);
+        info.p_next = head;
+    } else {
+        info = info.enabled_features(&features);
     }
     let device = instance.create_device(physical, &info, None)?;
     let rt = use_rt.then(|| {

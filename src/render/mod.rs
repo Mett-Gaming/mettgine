@@ -43,6 +43,7 @@ mod runs;
 mod screen;
 #[cfg(test)]
 mod tests;
+mod vendor;
 mod world;
 
 pub use hdr::HdrLevels;
@@ -50,6 +51,7 @@ pub use latency::{LatencyReport, LatencyTech, LowLatency};
 pub use modern::{MAX_UI_IMAGES, *};
 pub use params::*;
 pub use pipelines::WorldShaders;
+pub use vendor::{Quality, Upscaler};
 
 use crate::cull::{SkinBounds, Sphere};
 use crate::particles::ParticleInst;
@@ -252,6 +254,8 @@ pub struct Renderer {
     needs_recreate: bool,
     capture: Capture,
     latency: Latency,
+    /// Techniken der Hersteller
+    upscale: modern::Upscale,
     /// Zwischenbild der HDR-Ausgabe, nur mit `Config::hdr_output`
     hdr: Option<hdr::Hdr>,
     /// Bilder bis zum naechsten Blick auf den Grafikspeicher
@@ -278,6 +282,11 @@ impl Renderer {
     /// Name der Grafikkarte samt Treiber.
     pub fn gpu_name(&self) -> &str {
         &self.ctx.gpu_name
+    }
+
+    /// Techniken, die auf dieser Karte bereitstehen ([`Config::upscalers`]), mit Namen und Version.
+    pub fn upscalers(&mut self) -> Vec<(Upscaler, String)> {
+        self.upscale.available(&self.ctx)
     }
 
     /// Ist Raytracing eingeschaltet und von der Karte unterstuetzt?
@@ -371,6 +380,7 @@ impl Drop for Renderer {
             }
             self.capture.destroy(d);
             self.latency.destroy(d);
+            self.upscale.destroy(&self.ctx);
             if let Some(h) = &self.hdr {
                 h.destroy(d);
             }

@@ -198,13 +198,8 @@ impl<'a> Post<'a> {
         let cam = &self.s.camera;
         let extent = self.i.extent;
         let (w, h) = (extent.width as f32, extent.height as f32);
-        let jitter = if t.wants.taa {
-            super::gpu::jitter(m.number)
-        } else {
-            glam::Vec2::ZERO
-        };
-        let inv = super::gpu::jittered(cam, jitter, extent).inverse();
-        let turn = if t.wants.taa {
+        let inv = super::gpu::jittered(cam, m.jitter, extent).inverse();
+        let turn = if t.wants.temporal() {
             (m.number % 8) as f32
         } else {
             0.0
@@ -223,20 +218,38 @@ impl<'a> Post<'a> {
     }
 
     /// Alles nach der Beleuchtung, bis ins Szenenbild des Renderers.
-    pub unsafe fn finish(&mut self) {
+    ///
+    /// `hdr` = das geglaettete, ggf. hochskalierte Bild.
+    pub unsafe fn finish(&mut self, hdr: vk::ImageView) {
         let m = self.m;
         let Some(t) = &m.targets else {
             return;
         };
-        let hdr = self.taa(t);
         let exposure = self.exposure(hdr);
         let bloom = self.bloom(t, hdr, exposure);
         self.tonemap(t, hdr, bloom, exposure);
     }
 
-    /// Liefert das Bild, mit dem es weitergeht.
-    unsafe fn taa(&mut self, t: &Targets) -> vk::ImageView {
+    /// Maske der Stellen, an denen Halbtransparentes das Bild veraendert hat.
+    pub unsafe fn reactive_mask(&mut self) {
         let m = self.m;
+        let Some(t) = &m.targets else {
+            return;
+        };
+        if let (Some(opaque), Some(mask)) = (&t.opaque, &t.reactive) {
+            let views = [t.hdr.view, opaque.view];
+            let zero = Push::a([0.0; 4]);
+            let pipe = m.pipes.post.reactive;
+            self.draw_into(pipe, (mask, self.i.extent), &views, &zero);
+        }
+    }
+
+    /// Liefert das Bild, mit dem es weitergeht.
+    pub unsafe fn taa(&mut self) -> vk::ImageView {
+        let m = self.m;
+        let Some(t) = &m.targets else {
+            return vk::ImageView::null();
+        };
         let Some(h) = &t.history else {
             return t.hdr.view;
         };
@@ -250,7 +263,7 @@ impl<'a> Post<'a> {
         let (e, out) = (self.i.extent, self.i.out);
         let valid = m.history_valid as u8 as f32;
         let mut push = Push::a([e.width as f32, e.height as f32, valid, 0.0]);
-        let jitter = super::gpu::jitter(m.number);
+        let jitter = m.jitter;
         push.b = [out.width as f32, out.height as f32, jitter.x, jitter.y];
         let views = [t.hdr.view, old_view, t.motion.view, t.depth.view];
         self.draw_into(m.pipes.post.taa, (new, out), &views, &push);
@@ -286,8 +299,11 @@ impl<'a> Post<'a> {
         let cfg = self.s.features.bloom?;
         let (d, cmd) = (&self.i.ctx.device, self.i.cmd);
         let inv = |e: vk::Extent2D| (1.0 / e.width as f32, 1.0 / e.height as f32);
-        let has_taa = t.history.is_some();
-        let full = if has_taa { self.i.out } else { self.i.extent };
+        let full = if t.wants.temporal() {
+            self.i.out
+        } else {
+            self.i.extent
+        };
         let (mut src, mut size) = (hdr, full);
         for (k, (image, extent)) in t.bloom.iter().enumerate() {
             let (x, y) = inv(size);
@@ -349,7 +365,7 @@ impl<'a> Post<'a> {
             Some(ldr) => {
                 self.draw_into(m.pipes.post.tonemap, (ldr, extent), &views, &push);
                 let (x, y) = (1.0 / extent.width as f32, 1.0 / extent.height as f32);
-                let fxaa = f.anti_alias == AntiAlias::Fxaa;
+                let fxaa = f.anti_alias == AntiAlias::Fxaa && !t.wants.vendor;
                 let pipe = if fxaa {
                     m.pipes.post.fxaa
                 } else {

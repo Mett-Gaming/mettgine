@@ -156,7 +156,7 @@ impl Renderer {
         };
         let timer = &self.timer;
         let d = &self.ctx.device;
-        let result = m.record(&mut inputs, f, scene, &mut |name| {
+        let result = m.record(&mut inputs, f, scene, &mut self.upscale, &mut |name| {
             timer.mark(d, cmd, fi, name)
         });
         let (drawn, culled, calls) = m.counts();

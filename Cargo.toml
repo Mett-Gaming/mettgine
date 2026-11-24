@@ -43,8 +43,11 @@ gltf = ["dep:gltf", "images"]
 audio-files = ["rodio/wav", "rodio/vorbis"]
 ecs = ["dep:hecs"]
 physics = ["dep:rapier3d"]
+# Hochskalieren mit Techniken der Hersteller; die DLLs liegen neben der exe (siehe docs/hochskalieren.md)
+fsr = []
+xess = []
 # alles
-full = ["mett-net", "gltf", "images", "audio-files", "ecs", "physics"]
+full = ["fsr", "xess", "mett-net", "gltf", "images", "audio-files", "ecs", "physics"]
 
 [[example]]
 name = "modern"

@@ -9,7 +9,7 @@ use super::super::pipelines::{
 use super::super::Result;
 use super::model::{Joints, Vertex};
 use super::prepare::{Kind, KINDS};
-use super::targets::{AO, EXPOSURE, HDR, MOTION, NORMAL};
+use super::targets::{AO, EXPOSURE, HDR, MOTION, NORMAL, REACTIVE};
 use crate::gpu::{MeshVertex, SkinVertex};
 use crate::particles::ParticleInst;
 use ash::vk;
@@ -121,6 +121,7 @@ pub struct PostPipes {
     pub atrous: vk::Pipeline,
     pub compose: vk::Pipeline,
     pub sharpen: vk::Pipeline,
+    pub reactive: vk::Pipeline,
 }
 
 /// Alle Pipelines und Layouts.
@@ -261,6 +262,7 @@ unsafe fn post_pipes(d: &Gpu, layout: vk::PipelineLayout, ldr: vk::Format) -> Re
         atrous: make(spv!("p_atrous.frag"), HDR, Blend::Opaque)?,
         compose: make(spv!("p_compose.frag"), HDR, Blend::Opaque)?,
         sharpen: make(spv!("p_sharpen.frag"), ldr, Blend::Opaque)?,
+        reactive: make(spv!("p_reactive.frag"), REACTIVE, Blend::Opaque)?,
     })
 }
 
@@ -378,6 +380,7 @@ impl Pipes {
             p.atrous,
             p.compose,
             p.sharpen,
+            p.reactive,
             self.sky,
             self.sky_move,
             self.particle,

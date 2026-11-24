@@ -244,6 +244,8 @@ pub struct Features {
     pub render_scale: f32,
     /// Nachschaerfen (0 = aus, 1 = kraeftig)
     pub sharpen: f32,
+    /// Technik eines Herstellers statt `anti_alias`; steht sie nicht bereit, gilt `anti_alias`
+    pub upscaler: super::super::Upscaler,
 }
 
 impl Default for Features {
@@ -261,6 +263,7 @@ impl Default for Features {
             path_tracing: None,
             render_scale: 1.0,
             sharpen: 0.0,
+            upscaler: Default::default(),
         }
     }
 }
@@ -281,6 +284,7 @@ impl Features {
             path_tracing: None,
             render_scale: 1.0,
             sharpen: 0.0,
+            upscaler: Default::default(),
         }
     }
 }

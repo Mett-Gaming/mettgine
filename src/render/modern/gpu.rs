@@ -93,8 +93,8 @@ impl GpuLamp {
     }
 }
 
-/// Versatz der Kamera fuer TAA im Bild `n` (Bildpunkte, -0,5..0,5).
-pub fn jitter(n: u64) -> Vec2 {
+/// Versatz der Kamera fuer TAA im Bild `n` (Bildpunkte, -0,5..0,5); wiederholt sich nach `phases`.
+pub fn jitter(n: u64, phases: u64) -> Vec2 {
     let halton = |mut i: u64, base: u64| {
         let (mut f, mut r) = (1.0f32, 0.0f32);
         while i > 0 {
@@ -104,7 +104,7 @@ pub fn jitter(n: u64) -> Vec2 {
         }
         r
     };
-    let i = n % 32 + 1;
+    let i = n % phases.max(1) + 1;
     Vec2::new(halton(i, 2) - 0.5, halton(i, 3) - 0.5)
 }
 
@@ -210,8 +210,8 @@ mod tests {
 
     #[test]
     fn jitter_stays_inside_a_pixel_and_averages_out() {
-        let sum: Vec2 = (0..32).map(jitter).sum();
-        assert!((0..40).all(|n| jitter(n).abs().max_element() <= 0.5));
+        let sum: Vec2 = (0..32).map(|n| jitter(n, 32)).sum();
+        assert!((0..40).all(|n| jitter(n, 32).abs().max_element() <= 0.5));
         assert!((sum / 32.0).length() < 0.1);
     }
 

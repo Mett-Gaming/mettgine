@@ -49,6 +49,9 @@ pub struct Config<'a> {
     /// Reflex, Anti-Lag und Warten auf den Bildschirm bereitstellen (Vorgabe: aus). Eingeschaltet
     /// wird mit [`super::Renderer::set_low_latency`]
     pub low_latency: bool,
+    /// Techniken der Hersteller bereitstellen (Vorgabe: keine). Braucht das passende Cargo-Feature
+    /// und die DLLs neben der exe; was geht, sagt [`super::Renderer::upscalers`]
+    pub upscalers: &'a [super::Upscaler],
     /// Ausgabe fuer HDR-Bildschirme bereitstellen (Vorgabe: aus). Ob sie laeuft, sagt
     /// [`super::Renderer::hdr_active`]; zeigt der Bildschirm kein HDR, bleibt es bei SDR
     pub hdr_output: bool,
@@ -76,6 +79,7 @@ impl<'a> Config<'a> {
             world: WorldShaders::default(),
             ray_tracing: false,
             low_latency: false,
+            upscalers: &[],
             hdr_output: false,
             diagnostics: false,
         }

@@ -1,6 +1,7 @@
 //! Vulkan-Instanz, Surface, Geraet und Queue (Auswahl und Anlegen des Geraets: `device`).
 
 use super::device::{self, RtFns};
+use super::vendor::Vendors;
 use super::Result;
 use ash::vk;
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
@@ -51,7 +52,7 @@ unsafe extern "system" fn debug_callback(
 
 impl Context {
     /// `want` = zuschaltbare Teile, soweit die Karte sie kann.
-    pub fn new(window: &Window, want: device::Want) -> Result<Self> {
+    pub fn new(window: &Window, want: device::Want, vendors: &Vendors) -> Result<Self> {
         unsafe {
             let entry = ash::Entry::load()?;
             let display = window.display_handle()?.as_raw();
@@ -82,6 +83,13 @@ impl Context {
                     .any(|e| e.extension_name_as_c_str().ok() == Some(name))
                 {
                     extensions.push(name.as_ptr());
+                }
+            }
+            let more = vendors.instance_extensions();
+            for e in &more {
+                let known = |p: &*const std::ffi::c_char| CStr::from_ptr(*p) == e.as_c_str();
+                if !extensions.iter().any(known) {
+                    extensions.push(e.as_ptr());
                 }
             }
             if validation {
@@ -131,7 +139,7 @@ impl Context {
                 vk::api_version_minor(props.api_version)
             );
 
-            let made = device::create(&instance, physical, queue_family, want)?;
+            let made = device::create(&instance, physical, queue_family, want, vendors)?;
             let device::Made {
                 device,
                 rt,
