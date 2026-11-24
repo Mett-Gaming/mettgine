@@ -22,6 +22,8 @@ pub struct Context {
     pub queue: vk::Queue,
     pub swapchain_loader: ash::khr::swapchain::Device,
     pub rt: Option<RtFns>,
+    /// Helligkeit laesst sich dem Bildschirm mitteilen
+    pub hdr_metadata: bool,
     pub low_latency: super::latency::Support,
     pub diagnostics: super::diagnostics::Diagnostics,
     /// uebersetzte Shader (siehe `cache`)
@@ -72,6 +74,16 @@ impl Context {
                 .api_version(vk::API_VERSION_1_3);
             let mut extensions = ash_window::enumerate_required_extensions(display)?.to_vec();
             let mut layers = Vec::new();
+            if want.hdr {
+                let name = ash::ext::swapchain_colorspace::NAME;
+                let known = entry.enumerate_instance_extension_properties(None)?;
+                if known
+                    .iter()
+                    .any(|e| e.extension_name_as_c_str().ok() == Some(name))
+                {
+                    extensions.push(name.as_ptr());
+                }
+            }
             if validation {
                 extensions.push(ash::ext::debug_utils::NAME.as_ptr());
                 layers.push(VALIDATION_LAYER.as_ptr());
@@ -124,6 +136,7 @@ impl Context {
                 device,
                 rt,
                 low_latency,
+                hdr_metadata,
                 diagnostics,
                 max_anisotropy,
             } = made;
@@ -146,6 +159,7 @@ impl Context {
                 swapchain_loader,
                 rt,
                 low_latency,
+                hdr_metadata,
                 diagnostics,
                 cache,
                 max_anisotropy,

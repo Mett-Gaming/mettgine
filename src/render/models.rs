@@ -4,6 +4,11 @@
 use super::*;
 
 impl Renderer {
+    pub(super) fn new_modern(&self) -> Result<modern::Modern> {
+        let formats = (self.screen_format(), self.setup.color);
+        modern::Modern::new(&self.ctx, self.command_pool, formats)
+    }
+
     /// Legt die moderne Grafik an, falls noetig; `f` bekommt ihren Speicher.
     fn with_store<T>(
         &mut self,
@@ -11,11 +16,7 @@ impl Renderer {
     ) -> Result<T> {
         let mut m = match self.modern.take() {
             Some(m) => m,
-            None => Box::new(modern::Modern::new(
-                &self.ctx,
-                self.command_pool,
-                self.swapchain.format,
-            )?),
+            None => Box::new(self.new_modern()?),
         };
         let result = f(&mut m, &self.ctx);
         self.modern = Some(m);

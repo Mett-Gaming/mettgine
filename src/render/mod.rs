@@ -20,6 +20,7 @@ pub(crate) mod cache;
 pub(crate) mod context;
 mod device;
 mod diagnostics;
+mod hdr;
 mod latency;
 pub(crate) mod pipeline;
 pub(crate) mod present;
@@ -44,6 +45,7 @@ mod screen;
 mod tests;
 mod world;
 
+pub use hdr::HdrLevels;
 pub use latency::{LatencyReport, LatencyTech, LowLatency};
 pub use modern::{MAX_UI_IMAGES, *};
 pub use params::*;
@@ -250,6 +252,8 @@ pub struct Renderer {
     needs_recreate: bool,
     capture: Capture,
     latency: Latency,
+    /// Zwischenbild der HDR-Ausgabe, nur mit `Config::hdr_output`
+    hdr: Option<hdr::Hdr>,
     /// Bilder bis zum naechsten Blick auf den Grafikspeicher
     memory_in: u32,
     // Muss zuletzt freigegeben werden (Drop-Reihenfolge der Felder).
@@ -367,6 +371,9 @@ impl Drop for Renderer {
             }
             self.capture.destroy(d);
             self.latency.destroy(d);
+            if let Some(h) = &self.hdr {
+                h.destroy(d);
+            }
             self.timer.destroy(d);
             self.splash.destroy(d);
             self.pipes.destroy(d);

@@ -89,7 +89,13 @@ impl Renderer {
     fn post_setup(&self, f: &FrameInput) -> (vk::Pipeline, [[f32; 4]; 3]) {
         match &f.post {
             Post::Clean(c) => {
-                let params = [c.fade, c.red, c.saturation, 0.0];
+                // 0 = SDR, sonst so viel heller als Weiss darf es werden
+                let bright = if self.hdr_active() {
+                    self.headroom()
+                } else {
+                    0.0
+                };
+                let params = [c.fade, c.red, c.saturation, bright];
                 (self.pipes.post_clean, [params, [0.0; 4], [0.0; 4]])
             }
             Post::Plain(fade) => {
@@ -120,8 +126,9 @@ impl Renderer {
         if layered {
             self.record_ui_layer(cmd, fi, ui_count);
         }
+        let (target, view) = self.screen_target(image);
         let target = image_barrier(
-            self.swapchain.images[image],
+            target,
             vk::ImageAspectFlags::COLOR,
             vk::ImageLayout::UNDEFINED,
             vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
@@ -140,7 +147,7 @@ impl Renderer {
         );
         let extent = self.swapchain.extent;
         let att = [vk::RenderingAttachmentInfo::default()
-            .image_view(self.swapchain.views[image])
+            .image_view(view)
             .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
             .load_op(vk::AttachmentLoadOp::DONT_CARE)
             .store_op(vk::AttachmentStoreOp::STORE)];

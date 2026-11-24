@@ -3,8 +3,6 @@
 use super::{build, Timeline, BACK, MAX_VERTS};
 use crate::render::context::Context;
 use crate::render::pipeline::{create_pipeline, Blend, PipelineDesc};
-use crate::render::present::record_present;
-use crate::render::swapchain::Swapchain;
 use crate::render::transfer::{set_viewport, upload_mips};
 use crate::render::util::{image_barrier, Buffer, Image, ImageDesc};
 use crate::render::{Result, UiVertex};
@@ -228,7 +226,7 @@ impl Splash {
         self.time.active()
     }
 
-    /// Ganzes Bild aufnehmen (statt der Szene) und die Zeit weiterzaehlen.
+    /// Ganzes Bild aufnehmen (statt der Szene, ohne den Befehlspuffer abzuschliessen) und die Zeit weiterzaehlen.
     ///
     /// # Safety
     /// Die GPU muss mit dem Bild `fi` fertig sein, `cmd` gehoert zu ihm.
@@ -237,12 +235,10 @@ impl Splash {
         d: &ash::Device,
         cmd: vk::CommandBuffer,
         fi: usize,
-        sc: &Swapchain,
-        image_index: usize,
-        capture: Option<vk::Buffer>,
+        (target, view, extent): (vk::Image, vk::ImageView, vk::Extent2D),
     ) -> Result<()> {
         self.time.tick();
-        let aspect = sc.extent.width.max(1) as f32 / sc.extent.height.max(1) as f32;
+        let aspect = extent.width.max(1) as f32 / extent.height.max(1) as f32;
         build(self.time.t, aspect, &mut self.verts);
         self.bufs[fi].write(bytemuck::cast_slice(&self.verts));
         d.reset_command_buffer(cmd, vk::CommandBufferResetFlags::empty())?;
@@ -251,7 +247,6 @@ impl Splash {
             &vk::CommandBufferBeginInfo::default()
                 .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT),
         )?;
-        let target = sc.images[image_index];
         let output = vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT;
         d.cmd_pipeline_barrier(
             cmd,
@@ -269,9 +264,7 @@ impl Splash {
                 vk::AccessFlags::COLOR_ATTACHMENT_WRITE | vk::AccessFlags::COLOR_ATTACHMENT_READ,
             )],
         );
-        self.draw(d, cmd, fi, sc, image_index);
-        record_present(d, cmd, sc, target, capture);
-        d.end_command_buffer(cmd)?;
+        self.draw(d, cmd, fi, (view, extent));
         Ok(())
     }
 
@@ -280,12 +273,11 @@ impl Splash {
         d: &ash::Device,
         cmd: vk::CommandBuffer,
         fi: usize,
-        sc: &Swapchain,
-        image_index: usize,
+        (view, extent): (vk::ImageView, vk::Extent2D),
     ) {
         let k = super::brightness(self.time.t);
         let att = [vk::RenderingAttachmentInfo::default()
-            .image_view(sc.views[image_index])
+            .image_view(view)
             .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
             .load_op(vk::AttachmentLoadOp::CLEAR)
             .store_op(vk::AttachmentStoreOp::STORE)
@@ -299,12 +291,12 @@ impl Splash {
             &vk::RenderingInfo::default()
                 .render_area(vk::Rect2D {
                     offset: vk::Offset2D::default(),
-                    extent: sc.extent,
+                    extent,
                 })
                 .layer_count(1)
                 .color_attachments(&att),
         );
-        set_viewport(d, cmd, sc.extent);
+        set_viewport(d, cmd, extent);
         let gfx = vk::PipelineBindPoint::GRAPHICS;
         d.cmd_bind_pipeline(cmd, gfx, self.pipeline);
         d.cmd_bind_descriptor_sets(cmd, gfx, self.layout, 0, &[self.set], &[]);

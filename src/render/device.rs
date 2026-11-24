@@ -15,6 +15,7 @@ pub struct Want {
     pub ray_tracing: bool,
     pub low_latency: bool,
     pub diagnostics: bool,
+    pub hdr: bool,
 }
 
 /// Funktionen fuer Raytracing (nur, wenn eingeschaltet und von der Karte unterstuetzt).
@@ -29,6 +30,7 @@ pub struct Made {
     pub device: ash::Device,
     pub rt: Option<RtFns>,
     pub low_latency: Support,
+    pub hdr_metadata: bool,
     pub diagnostics: Diagnostics,
     /// hoechste Filterstufe schraeg gesehener Texturen (1 = kann die Karte nicht)
     pub max_anisotropy: f32,
@@ -166,6 +168,11 @@ pub unsafe fn create(
         names.push(ash::ext::memory_budget::NAME.as_ptr());
     }
 
+    let hdr_metadata = want.hdr && ext.has(ash::ext::hdr_metadata::NAME);
+    if hdr_metadata {
+        names.push(ash::ext::hdr_metadata::NAME.as_ptr());
+    }
+
     let can = instance.get_physical_device_features(physical);
     let features = vk::PhysicalDeviceFeatures::default()
         .sampler_anisotropy(can.sampler_anisotropy == vk::TRUE);
@@ -224,6 +231,7 @@ pub unsafe fn create(
     Ok(Made {
         low_latency: Support::load(instance, &device, plan),
         diagnostics: Diagnostics::new(instance, &device, fault, budget),
+        hdr_metadata,
         rt,
         max_anisotropy,
         device,

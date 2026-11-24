@@ -17,7 +17,6 @@ pub const MOTION: vk::Format = vk::Format::R16G16_SFLOAT;
 /// r = Verdeckung, g = Sonnenschatten aus Strahlen
 pub const AO: vk::Format = vk::Format::R8G8_UNORM;
 pub const EXPOSURE: vk::Format = vk::Format::R16_SFLOAT;
-pub const LDR: vk::Format = vk::Format::R8G8B8A8_UNORM;
 /// Stufen des Ueberstrahlens
 const BLOOM_LEVELS: u32 = 6;
 
@@ -104,7 +103,7 @@ impl RayTargets {
 }
 
 impl Targets {
-    pub fn new(ctx: &Context, arena: &mut Arena, w: Wants) -> Result<Self> {
+    pub fn new(ctx: &Context, arena: &mut Arena, w: Wants, ldr: vk::Format) -> Result<Self> {
         let mut color = |format| arena.image(ctx, &TexDesc::target(w.width, w.height, format));
         let (hdr, normal, motion) = (color(HDR)?, color(NORMAL)?, color(MOTION)?);
         let ao = if w.ssao {
@@ -119,7 +118,7 @@ impl Targets {
         } else {
             None
         };
-        let ldr = if w.fxaa { Some(full(LDR)?) } else { None };
+        let ldr = if w.fxaa { Some(full(ldr)?) } else { None };
         let mut color = |format| arena.image(ctx, &TexDesc::target(w.width, w.height, format));
         let rays = if w.rays {
             Some(RayTargets {

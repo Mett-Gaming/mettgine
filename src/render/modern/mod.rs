@@ -131,6 +131,8 @@ pub(crate) struct Modern {
     ping: usize,
     /// wiederverwendet
     lamp_data: Vec<GpuLamp>,
+    /// Format des fertigen Szenenbilds
+    ldr: vk::Format,
 }
 
 /// Was die Aufnahme aus dem Renderer braucht.
@@ -142,6 +144,8 @@ pub(crate) struct Inputs<'a> {
     pub extent: vk::Extent2D,
     /// Aufloesung des Ziels
     pub out: vk::Extent2D,
+    /// so viel heller als Weiss darf es werden (1 = SDR)
+    pub headroom: f32,
     /// Ziel: das Szenenbild des Renderers
     pub color: vk::Image,
     pub color_view: vk::ImageView,
@@ -175,7 +179,11 @@ impl Inputs<'_> {
 }
 
 impl Modern {
-    pub fn new(ctx: &Context, pool: vk::CommandPool, swapchain: vk::Format) -> Result<Self> {
+    pub fn new(
+        ctx: &Context,
+        pool: vk::CommandPool,
+        (screen, ldr): (vk::Format, vk::Format),
+    ) -> Result<Self> {
         let mut store = Store::new(ctx)?;
         let plain_material = store.add_material(ctx, &Material::default())?;
         let mut rt = rt::Rt::new(ctx)?;
@@ -191,7 +199,7 @@ impl Modern {
             store.sets.layout,
             sets.post_layout,
             rt.as_ref().map(|r| r.layout),
-            swapchain,
+            (screen, ldr),
         )?;
         let fixed = Fixed::new(ctx, pool, &mut store.arena)?;
         Ok(Self {
@@ -216,6 +224,7 @@ impl Modern {
             history_valid: false,
             ping: 0,
             lamp_data: Vec::new(),
+            ldr,
         })
     }
 
@@ -236,7 +245,7 @@ impl Modern {
                 old.destroy(&mut self.store.arena, &ctx.device);
             }
         }
-        self.targets = Some(Targets::new(ctx, &mut self.store.arena, wants)?);
+        self.targets = Some(Targets::new(ctx, &mut self.store.arena, wants, self.ldr)?);
         self.history_valid = false;
         Ok(())
     }

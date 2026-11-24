@@ -16,12 +16,25 @@ impl Renderer {
         }
         // SAFETY: Neuaufbau; danach nutzt die GPU keine der alten Ressourcen mehr.
         unsafe { self.ctx.device.device_wait_idle()? };
-        let new = Swapchain::new(&self.ctx, (w, h), self.vsync, self.swapchain.handle)?;
+        let hdr = self.wants_hdr();
+        let new = Swapchain::new(&self.ctx, (w, h), self.vsync, hdr, self.swapchain.handle)?;
         std::mem::replace(&mut self.swapchain, new).destroy(&self.ctx);
         self.latency.swapchain_changed();
+        if let Some(h) = &mut self.hdr {
+            // SAFETY: die GPU ist untaetig (oben gewartet)
+            unsafe {
+                h.rebuild(
+                    &self.ctx,
+                    &self.desc,
+                    self.pipes.tex_layout,
+                    &self.swapchain,
+                )?
+            };
+        }
         let ext = offscreen_extent(self.window_size, self.resolution);
         if ext != self.offscreen || self.wanted_samples != self.samples {
-            let (c, d, m) = Self::make_targets(&self.ctx, ext, self.wanted_samples)?;
+            let (c, d, m) =
+                Self::make_targets(&self.ctx, ext, self.wanted_samples, self.setup.color)?;
             let dev = &self.ctx.device;
             std::mem::replace(&mut self.color, c).destroy(dev);
             std::mem::replace(&mut self.depth, d).destroy(dev);
@@ -244,16 +257,18 @@ impl Renderer {
         let image = image_index as usize;
         let cap = self.capture.prepare(&self.ctx, &self.swapchain)?;
         if self.splash.active() {
+            let (target, view) = self.screen_target(image);
+            let to = (target, view, self.swapchain.extent);
             let d = &self.ctx.device;
-            self.splash
-                .record(d, frame.cmd, fi, &self.swapchain, image, cap)?;
+            self.splash.record(d, frame.cmd, fi, to)?;
+            self.finish_commands(frame.cmd, image, cap)?;
             self.particles.clear();
         } else {
             self.timer.collect(&self.ctx.device, fi, &mut self.stats);
             self.measure_memory();
             let start = Instant::now();
             if f.scene.is_some() && self.modern.is_none() {
-                let m = modern::Modern::new(&self.ctx, self.command_pool, self.swapchain.format)?;
+                let m = self.new_modern()?;
                 self.modern = Some(Box::new(m));
             }
             // moderne Grafik: Modelle und Figuren laufen ueber ihre eigenen Listen
@@ -278,7 +293,8 @@ impl Renderer {
         }
         self.latency.end(true);
         if cap.is_some() {
-            self.capture.finish(&self.ctx, &self.swapchain)?;
+            let paper = self.paper_white();
+            self.capture.finish(&self.ctx, &self.swapchain, paper)?;
         }
         Ok(())
     }

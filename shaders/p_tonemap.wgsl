@@ -1,5 +1,5 @@
 // Helle Werte auf den Bildschirm bringen. tex0 = Bild, tex1 = Ueberstrahlen, tex2 = Belichtung;
-// a = Art (0 hart, 1 ACES, 2 AgX), Anteil Ueberstrahlen
+// a = Art (0 hart, 1 ACES, 2 AgX), Anteil Ueberstrahlen, Spielraum ueber Weiss (Anzeigewert, 1 = SDR)
 
 #include "_p_common.wgsl"
 
@@ -38,6 +38,19 @@ fn to_display(c: vec3<f32>) -> vec3<f32> {
     return select(hi, lo, c <= vec3<f32>(0.0031308));
 }
 
+// Lichter eines fertigen SDR-Bildes bis `h` oeffnen. Unter der Schulter bleibt alles gleich, bei
+// h = 1 ueberall. Kurven, die schon bei 1 enden, werden dort rueckwaerts aufgeloest.
+fn extend(c: vec3<f32>, h: f32, hard: bool) -> vec3<f32> {
+    if (hard) {
+        return min(c, vec3<f32>(h));
+    }
+    let knee = 0.75;
+    let room = h - knee;
+    let u = clamp((c - vec3<f32>(knee)) / (1.0 - knee), vec3<f32>(0.0), vec3<f32>(0.9999));
+    let open = vec3<f32>(knee) + room * (vec3<f32>(1.0) - pow(vec3<f32>(1.0) - u, vec3<f32>((1.0 - knee) / room)));
+    return select(open, c, c <= vec3<f32>(knee));
+}
+
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     var c = textureSampleLevel(tex0, linear_samp, in.uv, 0.0).rgb * textureLoad(tex2, vec2<i32>(0), 0).r;
@@ -49,7 +62,11 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     } else if (pc.a.x > 0.5) {
         c = aces(c);
     }
-    c = to_display(clamp(c, vec3<f32>(0.0), vec3<f32>(1.0)));
+    if (pc.a.z > 1.0) {
+        c = extend(to_display(max(c, vec3<f32>(0.0))), pc.a.z, pc.a.x < 0.5);
+    } else {
+        c = to_display(clamp(c, vec3<f32>(0.0), vec3<f32>(1.0)));
+    }
     // feines Rauschen gegen Farbstufen
     let n = fract(52.9829189 * fract(dot(in.pos.xy, vec2<f32>(0.06711056, 0.00583715)))) - 0.5;
     return vec4<f32>(c + vec3<f32>(n / 255.0), 1.0);

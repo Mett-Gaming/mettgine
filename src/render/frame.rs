@@ -120,10 +120,7 @@ impl Renderer {
         let d = &self.ctx.device;
         self.record_screen(cmd, image, f, fi, n.ui);
         self.timer.mark(d, cmd, fi, "Nachbearbeitung");
-        let target = self.swapchain.images[image];
-        present::record_present(d, cmd, &self.swapchain, target, capture);
-        d.end_command_buffer(cmd)?;
-        Ok(())
+        self.finish_commands(cmd, image, capture)
     }
 
     /// Moderne Grafik statt des einfachen Szenen-Durchgangs (Ergebnis ebenfalls in `color`).
@@ -142,6 +139,7 @@ impl Renderer {
             fi,
             extent: self.offscreen,
             out: self.offscreen,
+            headroom: self.headroom(),
             color: self.color.image,
             color_view: self.color.view,
             bones: &self.bone_bufs[fi],

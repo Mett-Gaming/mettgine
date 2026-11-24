@@ -49,6 +49,9 @@ pub struct Config<'a> {
     /// Reflex, Anti-Lag und Warten auf den Bildschirm bereitstellen (Vorgabe: aus). Eingeschaltet
     /// wird mit [`super::Renderer::set_low_latency`]
     pub low_latency: bool,
+    /// Ausgabe fuer HDR-Bildschirme bereitstellen (Vorgabe: aus). Ob sie laeuft, sagt
+    /// [`super::Renderer::hdr_active`]; zeigt der Bildschirm kein HDR, bleibt es bei SDR
+    pub hdr_output: bool,
     /// Grund eines Grafikkarten-Ausfalls und belegten Speicher melden (Vorgabe: aus)
     pub diagnostics: bool,
 }
@@ -73,6 +76,7 @@ impl<'a> Config<'a> {
             world: WorldShaders::default(),
             ray_tracing: false,
             low_latency: false,
+            hdr_output: false,
             diagnostics: false,
         }
     }

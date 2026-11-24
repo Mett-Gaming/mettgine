@@ -9,7 +9,7 @@ use super::super::pipelines::{
 use super::super::Result;
 use super::model::{Joints, Vertex};
 use super::prepare::{Kind, KINDS};
-use super::targets::{AO, EXPOSURE, HDR, LDR, MOTION, NORMAL};
+use super::targets::{AO, EXPOSURE, HDR, MOTION, NORMAL};
 use crate::gpu::{MeshVertex, SkinVertex};
 use crate::particles::ParticleInst;
 use ash::vk;
@@ -241,7 +241,7 @@ unsafe fn kind_pipes(d: &Gpu, layout: vk::PipelineLayout, kind: Kind) -> Result<
     })
 }
 
-unsafe fn post_pipes(d: &Gpu, layout: vk::PipelineLayout) -> Result<PostPipes> {
+unsafe fn post_pipes(d: &Gpu, layout: vk::PipelineLayout, ldr: vk::Format) -> Result<PostPipes> {
     let vs = spv!("p_tonemap.vert");
     let make = |fs: &'static [u8], format, blend| {
         create_pipeline(d, layout, &screen_desc(vs, fs, format, blend, &[], &[]))
@@ -253,12 +253,12 @@ unsafe fn post_pipes(d: &Gpu, layout: vk::PipelineLayout) -> Result<PostPipes> {
         down: make(spv!("p_down.frag"), HDR, Blend::Opaque)?,
         up: make(spv!("p_up.frag"), HDR, Blend::Add)?,
         exposure: make(spv!("p_exposure.frag"), EXPOSURE, Blend::Opaque)?,
-        tonemap: make(spv!("p_tonemap.frag"), LDR, Blend::Opaque)?,
-        fxaa: make(spv!("p_fxaa.frag"), LDR, Blend::Opaque)?,
+        tonemap: make(spv!("p_tonemap.frag"), ldr, Blend::Opaque)?,
+        fxaa: make(spv!("p_fxaa.frag"), ldr, Blend::Opaque)?,
         accum: make(spv!("p_accum.frag"), HDR, Blend::Opaque)?,
         atrous: make(spv!("p_atrous.frag"), HDR, Blend::Opaque)?,
         compose: make(spv!("p_compose.frag"), HDR, Blend::Opaque)?,
-        sharpen: make(spv!("p_sharpen.frag"), LDR, Blend::Opaque)?,
+        sharpen: make(spv!("p_sharpen.frag"), ldr, Blend::Opaque)?,
     })
 }
 
@@ -269,7 +269,7 @@ impl Pipes {
         material: vk::DescriptorSetLayout,
         post: vk::DescriptorSetLayout,
         rays: Option<vk::DescriptorSetLayout>,
-        swapchain: vk::Format,
+        (screen, ldr): (vk::Format, vk::Format),
     ) -> Result<Self> {
         let d = &ctx.gpu();
         // SAFETY: gueltiges Geraet; freigegeben in `destroy`.
@@ -326,14 +326,14 @@ impl Pipes {
                 sky: create_pipeline(d, layout, &sky)?,
                 particle: create_pipeline(d, layout, &particle)?,
                 decal: create_pipeline(d, layout, &decal)?,
-                post: post_pipes(d, post_layout)?,
+                post: post_pipes(d, post_layout, ldr)?,
                 image: create_pipeline(
                     d,
                     post_layout,
                     &screen_desc(
                         spv!("p_image.vert"),
                         spv!("p_image.frag"),
-                        swapchain,
+                        screen,
                         Blend::Alpha,
                         &[],
                         &[],

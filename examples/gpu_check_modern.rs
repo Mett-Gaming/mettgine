@@ -2,7 +2,8 @@
 //! Testszene mit einzelnen und allen Zusaetzen, vergleicht Bildpunkte und legt die Bilder als BMP
 //! in `<ordner>` ab.
 //!
-//! Aufruf: `cargo run --release --example gpu_check_modern <ordner>`
+//! Aufruf: `cargo run --release --example gpu_check_modern <ordner>`, mit `METTGINE_HDR=1` ueber
+//! die HDR-Ausgabe (die Bilder sind dann umgerechnet)
 
 use glam::{Mat4, Vec3, Vec4};
 use mettgine::particles::ParticleInst;
@@ -395,10 +396,16 @@ fn run(window: &Window, dir: &Path) -> std::result::Result<(), String> {
     let meshes = [shapes::cube()];
     let config = Config {
         ray_tracing: true,
+        hdr_output: std::env::var_os("METTGINE_HDR").is_some(),
         ..Config::new(&meshes, &[], (&font, 128, 128))
     };
     let mut r = Renderer::new(window, &config).map_err(e)?;
-    println!("{}, Raytracing: {}", r.gpu_name(), r.ray_tracing());
+    println!(
+        "{}, Raytracing: {}, HDR: {}",
+        r.gpu_name(),
+        r.ray_tracing(),
+        r.hdr_active()
+    );
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     let world = build(&mut r).map_err(e)?;
     let mut all = cases();

@@ -9,16 +9,19 @@ pub struct Swapchain {
     pub images: Vec<vk::Image>,
     pub views: Vec<vk::ImageView>,
     pub format: vk::Format,
+    pub space: vk::ColorSpaceKHR,
     pub extent: vk::Extent2D,
     pub render_finished: Vec<vk::Semaphore>,
 }
 
 impl Swapchain {
     /// `vsync` = an den Bildschirm gebunden (kein Zerreissen); sonst so schnell wie moeglich.
+    /// `hdr` = HDR-Format nehmen, wenn das Fenster eins anbietet.
     pub fn new(
         ctx: &Context,
         (width, height): (u32, u32),
         vsync: bool,
+        hdr: bool,
         old: vk::SwapchainKHR,
     ) -> Result<Self> {
         unsafe {
@@ -38,7 +41,10 @@ impl Swapchain {
                         .find(|f| f.format == vk::Format::R8G8B8A8_UNORM)
                 })
                 .copied()
-                .or_else(|| formats.first().copied())
+                .or_else(|| formats.first().copied());
+            let format = super::hdr::choose(&formats)
+                .filter(|_| hdr)
+                .or(format)
                 .ok_or("Das Fenster bietet kein Bildformat an")?;
 
             let extent = if caps.current_extent.width != u32::MAX {
@@ -124,6 +130,7 @@ impl Swapchain {
                 images,
                 views,
                 format: format.format,
+                space: format.color_space,
                 extent,
                 render_finished,
             })

@@ -249,7 +249,8 @@ impl Capture {
         if self.path.is_none() || !sc.can_capture {
             return Ok(None);
         }
-        let bytes = (sc.extent.width * sc.extent.height * 4) as u64;
+        let bytes =
+            (sc.extent.width * sc.extent.height) as u64 * super::hdr::pixel_bytes(sc.format);
         if self.buf.as_ref().is_none_or(|b| b.size < bytes) {
             if let Some(old) = self.buf.take() {
                 old.destroy(&ctx.device);
@@ -261,12 +262,17 @@ impl Capture {
     }
 
     /// Foto auslesen und speichern (wartet einmal auf die GPU, nur bei Fotos).
-    pub fn finish(&mut self, ctx: &Context, sc: &Swapchain) -> Result<()> {
+    /// `paper_white` = Weiss der Oberflaeche (Nits, nur bei HDR).
+    pub fn finish(&mut self, ctx: &Context, sc: &Swapchain, paper_white: f32) -> Result<()> {
         // SAFETY: Warten, damit die Kopie fertig im Puffer liegt.
         unsafe { ctx.device.device_wait_idle()? };
         if let (Some(path), Some(buf)) = (self.path.take(), &self.buf) {
             let (w, h) = (sc.extent.width, sc.extent.height);
-            let px = buf.read((w * h * 4) as usize);
+            let size = super::hdr::pixel_bytes(sc.format) as usize;
+            let mut px = buf.read((w * h) as usize * size);
+            if sc.space != vk::ColorSpaceKHR::SRGB_NONLINEAR {
+                px = super::hdr::to_bgra(&px, sc.format, sc.space, paper_white);
+            }
             let rgba = sc.format == vk::Format::R8G8B8A8_UNORM;
             if let Err(e) = write_bmp(&path, w, h, &px, rgba) {
                 crate::crash::log(&format!("Bildschirmfoto fehlgeschlagen: {e}"));

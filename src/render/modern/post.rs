@@ -334,7 +334,7 @@ impl<'a> Post<'a> {
             .bloom
             .filter(|_| bloom.is_some())
             .map_or(0.0, |b| b.strength);
-        let push = Push::a([kind, strength, 0.0, 0.0]);
+        let push = Push::a([kind, strength, self.i.headroom, 0.0]);
         let views = [hdr, bloom.unwrap_or(hdr), exposure];
         let (d, cmd) = (&self.i.ctx.device, self.i.cmd);
         let extent = self.i.out;

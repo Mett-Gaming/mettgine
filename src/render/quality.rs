@@ -77,7 +77,13 @@ impl Renderer {
         unsafe {
             let d = &self.ctx.gpu();
             let layout = self.pipes.scene_layout;
-            let new = create_scene_pipelines(d, layout, self.wanted_samples, &self.setup)?;
+            let new = create_scene_pipelines(
+                d,
+                layout,
+                self.wanted_samples,
+                &self.setup,
+                self.setup.color,
+            )?;
             let old = std::mem::replace(&mut self.pipes.scene, new);
             for p in old.all() {
                 d.destroy_pipeline(p, None);

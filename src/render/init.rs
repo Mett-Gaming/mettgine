@@ -73,10 +73,10 @@ unsafe fn r8_texture(
 }
 
 /// Farbbild, in das gezeichnet und aus dem gelesen wird.
-fn color_target(ctx: &Context, e: vk::Extent2D) -> Result<Image> {
+fn color_target(ctx: &Context, e: vk::Extent2D, format: vk::Format) -> Result<Image> {
     let usage = vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::SAMPLED;
     let aspect = vk::ImageAspectFlags::COLOR;
-    Image::new(ctx, e.width, e.height, COLOR_FORMAT, usage, aspect)
+    Image::new(ctx, e.width, e.height, format, usage, aspect)
 }
 
 /// Tiefenbild, `sampled` = auch lesbar (Schattenkarte).
@@ -132,7 +132,7 @@ impl SecondCamera {
     fn new(ctx: &Context, size: Option<(u32, u32)>) -> Result<Self> {
         let extent = size.map_or(square(1), |(width, height)| vk::Extent2D { width, height });
         Ok(Self {
-            color: color_target(ctx, extent)?,
+            color: color_target(ctx, extent, COLOR_FORMAT)?,
             depth: depth_target(ctx, extent, false)?,
             extent,
             enabled: size.is_some(),
@@ -147,7 +147,7 @@ impl UiLayer {
             UiSize::Height(_) => (square(1), false),
         };
         Ok(Self {
-            image: color_target(ctx, extent)?,
+            image: color_target(ctx, extent, COLOR_FORMAT)?,
             extent,
             enabled,
         })
@@ -171,18 +171,31 @@ impl Renderer {
                 ray_tracing: cfg.ray_tracing,
                 low_latency: cfg.low_latency,
                 diagnostics: cfg.diagnostics,
+                hdr: cfg.hdr_output,
             },
         )?;
         let latency = Latency::new(&ctx)?;
-        let swapchain = Swapchain::new(&ctx, window_size, true, vk::SwapchainKHR::null())?;
+        let swapchain = Swapchain::new(
+            &ctx,
+            window_size,
+            true,
+            cfg.hdr_output,
+            vk::SwapchainKHR::null(),
+        )?;
         let offscreen = offscreen_extent(window_size, cfg.resolution);
         let samples = vk::SampleCountFlags::TYPE_1;
-        let (color, depth, ms_color) = Self::make_targets(&ctx, offscreen, samples)?;
+        let (scene_format, screen_format) = if cfg.hdr_output {
+            (hdr::FORMAT, hdr::FORMAT)
+        } else {
+            (COLOR_FORMAT, swapchain.format)
+        };
+        let (color, depth, ms_color) = Self::make_targets(&ctx, offscreen, samples, scene_format)?;
         let shadow = depth_target(&ctx, square(SHADOW_SIZE), true)?;
         let dummy_shadow = depth_target(&ctx, square(1), true)?;
         let second = SecondCamera::new(&ctx, cfg.second_camera)?;
         let ui_layer = UiLayer::new(&ctx, cfg.ui)?;
         let setup = SceneSetup {
+            color: scene_format,
             depth_compare: if cfg.last_wins {
                 vk::CompareOp::LESS_OR_EQUAL
             } else {
@@ -202,9 +215,13 @@ impl Renderer {
         unsafe {
             let d = &ctx.device;
             let desc = Descriptors::new(d)?;
-            let pipes = create_pipelines(&ctx.gpu(), &desc, swapchain.format, &setup)?;
+            let pipes = create_pipelines(&ctx.gpu(), &desc, screen_format, &setup)?;
             let (command_pool, frames) = present::create_frames(&ctx, FRAMES_IN_FLIGHT)?;
-            let splash = Splash::new(&ctx, command_pool, swapchain.format, FRAMES_IN_FLIGHT)?;
+            let splash = Splash::new(&ctx, command_pool, screen_format, FRAMES_IN_FLIGHT)?;
+            let hdr = match cfg.hdr_output {
+                true => Some(hdr::Hdr::new(&ctx, &desc, pipes.tex_layout, &swapchain)?),
+                false => None,
+            };
             let timer = GpuTimer::new(&ctx, FRAMES_IN_FLIGHT)?;
             let font = r8_texture(&ctx, command_pool, cfg.font, FONT_MIPS)?;
             let signs = r8_texture(&ctx, command_pool, cfg.signs.unwrap_or((&[0], 1, 1)), 1)?;
@@ -289,6 +306,7 @@ impl Renderer {
                 needs_recreate: false,
                 capture: Capture::default(),
                 latency,
+                hdr,
                 memory_in: 0,
                 ctx,
             };
@@ -305,8 +323,9 @@ impl Renderer {
         ctx: &Context,
         ext: vk::Extent2D,
         samples: vk::SampleCountFlags,
+        format: vk::Format,
     ) -> Result<(Image, Image, Option<Image>)> {
-        let color = color_target(ctx, ext)?;
+        let color = color_target(ctx, ext, format)?;
         if samples == vk::SampleCountFlags::TYPE_1 {
             return Ok((color, depth_target(ctx, ext, false)?, None));
         }
@@ -330,7 +349,7 @@ impl Renderer {
             vk::ImageAspectFlags::DEPTH,
         )?;
         let ms = make(
-            COLOR_FORMAT,
+            format,
             vk::ImageUsageFlags::COLOR_ATTACHMENT,
             vk::ImageAspectFlags::COLOR,
         )?;

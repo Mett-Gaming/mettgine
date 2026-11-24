@@ -171,6 +171,8 @@ pub(super) fn scene_desc<'a>(
 
 /// Was die Szenen-Pipelines einer Renderer-Instanz bestimmt (fuer den Neubau aufgehoben).
 pub(super) struct SceneSetup {
+    /// Format des Szenenbilds
+    pub color: vk::Format,
     pub depth_compare: vk::CompareOp,
     pub world_vert: Vec<u8>,
     pub world_frag: Vec<u8>,
@@ -182,6 +184,7 @@ pub(super) unsafe fn create_scene_pipelines(
     layout: vk::PipelineLayout,
     samples: vk::SampleCountFlags,
     setup: &SceneSetup,
+    color: vk::Format,
 ) -> Result<ScenePipelines> {
     let skin_attrs = [
         attr(0, 0, F3),
@@ -202,6 +205,7 @@ pub(super) unsafe fn create_scene_pipelines(
     let make = |desc: PipelineDesc| {
         let desc = PipelineDesc {
             samples,
+            color_format: Some(color),
             depth_compare: setup.depth_compare,
             ..desc
         };
@@ -312,8 +316,8 @@ pub(super) unsafe fn create_pipelines(
     };
     let single = vk::SampleCountFlags::TYPE_1;
     Ok(Pipelines {
-        scene: create_scene_pipelines(d, scene_layout, single, setup)?,
-        second: create_scene_pipelines(d, scene_layout, single, setup)?,
+        scene: create_scene_pipelines(d, scene_layout, single, setup, setup.color)?,
+        second: create_scene_pipelines(d, scene_layout, single, setup, COLOR_FORMAT)?,
         shadow: shadow(
             spv!("shadow.vert"),
             spv!("shadow.frag"),
