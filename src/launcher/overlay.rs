@@ -26,6 +26,7 @@ impl OverlayKey {
         let key = match name {
             "tab" => KeyCode::Tab,
             "f1" => KeyCode::F1,
+            "f9" => KeyCode::F9,
             "f12" => KeyCode::F12,
             _ => return None,
         };
@@ -204,6 +205,7 @@ mod tests {
         let k = OverlayKey::parse("shift+tab").unwrap();
         assert!(k.shift && k.key == KeyCode::Tab);
         assert_eq!(OverlayKey::parse("f12").map(|k| k.shift), Some(false));
+        assert_eq!(OverlayKey::parse("f9").map(|k| k.key), Some(KeyCode::F9));
         assert_eq!(OverlayKey::parse("shift+quatsch"), None);
     }
 
