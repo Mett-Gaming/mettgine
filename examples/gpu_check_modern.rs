@@ -424,6 +424,45 @@ fn run(window: &Window, dir: &Path) -> std::result::Result<(), String> {
             return Err(format!("{} aendert nichts am Bild", c.name));
         }
     }
+    // Viel auf einmal, dazu Groessenwechsel
+    let many: Vec<ObjectDraw> = (0..6000)
+        .map(|i| {
+            let (x, z) = ((i % 100) as f32 - 50.0, (i / 100) as f32 * -1.5);
+            let at = Mat4::from_translation(Vec3::new(x * 1.5, 0.5, z));
+            ObjectDraw::new(world.objects[1].model, world.objects[1].material, at)
+        })
+        .collect();
+    let lots: Vec<Light> = (0..1200)
+        .map(|i| Light {
+            pos: Vec3::new((i % 40) as f32 * 3.0 - 60.0, 1.5, (i / 40) as f32 * -3.0),
+            ..world.lights[0]
+        })
+        .collect();
+    let crowd = World {
+        objects: many,
+        lights: lots,
+        logo: world.logo,
+        meshes: Vec::new(),
+    };
+    for c in all
+        .iter()
+        .filter(|c| c.name == "alles" || c.name == "strahlen_alles")
+    {
+        for (f, size) in [(W, H), (640, 360), (W, H), (333, 777), (W, H)]
+            .iter()
+            .enumerate()
+        {
+            r.resize(size.0, size.1);
+            for k in 0..20 {
+                shot(&mut r, &crowd, c, f as u32 * 20 + k, None).map_err(e)?;
+            }
+        }
+        let s = r.stats();
+        println!(
+            "viel/{}: CPU {:.2} ms, GPU {:.2} ms, Befehle {}",
+            c.name, s.cpu_ms, s.gpu_ms, s.draw_calls
+        );
+    }
     // Entfernen waehrend des Betriebs darf nichts kaputt machen
     r.remove_model(world.objects[0].model);
     r.remove_material(world.objects[1].material);

@@ -204,7 +204,7 @@ impl Audio {
     }
 }
 
-/// Klangdatei entpacken (WAV, OGG Vorbis, MP3) und auf Mono bei [`super::RATE`] bringen.
+/// Klangdatei entpacken (WAV, OGG Vorbis) und auf Mono bei [`super::RATE`] bringen.
 #[cfg(feature = "audio-files")]
 pub fn decode(bytes: &[u8]) -> Result<Sound, String> {
     use rodio::Source;

@@ -5,6 +5,13 @@ Die Engine der Mett-Gaming-Spiele, entstanden aus [KASSE 0](https://github.com/M
 | Modul | Inhalt |
 |---|---|
 | `render` | Der eine Renderer für alle Spiele (Vulkan): Sonne mit Schattenkarte oder Räume mit Lampen, Welt-Boxen, Modelle (instanziert), animierte Figuren, Hologramme, Partikel, zweite Kamera, UI, saubere oder Videoband-Nachbearbeitung, Screenshots. Sortiert Unsichtbares aus, Puffer wachsen mit |
+| `app` | Spielgerüst: Fenster, Ereignisse, Bildtakt, Absturzfenster. Ein Spiel setzt `Game` um |
+| `time`, `input` | fester Takt; Tastatur, Maus, Controller, umstellbare Tasten |
+| `asset`, `jobs` | Spieldaten im Hintergrund laden (auch PNG, JPEG, glTF, Klang), Arbeit auf Kerne verteilen |
+| `scene`, `camera`, `nav` | Objekte mit Hierarchie, Kameraführung, Wegfindung |
+| `physics`, `ecs` | Physik (rapier) und Entity-Component-System (hecs), beide zuschaltbar |
+| `menu`, `locale`, `save`, `random` | Menüs, Übersetzungen, Spielstände, Zufall |
+| `debug`, `shapes` | Linien, Konsole, Messung; einfache Formen |
 | `particles` | Partikel-Rechnung (Staub, Rauch, Funken), gezeichnet von `render` |
 | `cull` | Sichtfeld und Hüllkugeln |
 | `collide` | Kollision ohne Physik-Bibliothek: Kisten, Kapseln, Strahlen, Sichtlinien, Stufen |
@@ -14,14 +21,56 @@ Die Engine der Mett-Gaming-Spiele, entstanden aus [KASSE 0](https://github.com/M
 | `gpu` | Datenformate zwischen Spiel und Renderer: Welt-Boxen, Lichter, Modelle, Figuren (`.k0s`) |
 | `ui` | Bitmap-Text und Formen für Menüs und HUD |
 | `canvas`, `text` | Zeichenfläche für Menüs mit Schrift aus TTF/OTF |
-| `input` | Tastatur, Maus, Controller |
-| `audio` | Effekte, Musik, Klang-Bausteine (`synth`), Raumklang (`spatial`) |
+| `audio` | Effekte, Musik, Klang-Bausteine (`synth`), Raumklang (`spatial`), Mischpult (`mixer`) |
 | `net` | Mehrspieler-Verbindungen; `net::sync` für Abgleich, Zwischenbilder und Vorhersage |
 | `presence` | Meldet dem Mett Launcher, was gerade passiert (Discord-Anzeige) |
 | `settings` | Einstellungen lesen und speichern |
 | `crash`, `crash_window` | Protokoll, Absturzberichte (auch bei Treiberabstürzen) und Absturzfenster |
 
 Die Shader liegen in `shaders/` und werden beim Bauen mit naga zu SPIR-V übersetzt, ein Vulkan SDK braucht man nicht. Die vorgegebenen Welt-Materialien (Poster, Schilder, Monitor) stammen aus KASSE 0 und liegen in `_world_kasse0.wgsl`; eigene bringt ein Spiel mit `Config::world` mit.
+
+## Schnell anfangen
+
+```rust
+use mettgine::app::{self, AppConfig, Game, Stage};
+use mettgine::render::{FrameInput, MeshDraw, Renderer};
+
+struct MeinSpiel;
+
+impl Game for MeinSpiel {
+    fn renderer(&mut self, window: &winit::window::Window) -> app::Result<Renderer> {
+        Renderer::simple(window, &[mettgine::shapes::cube()])
+    }
+    fn frame(&mut self, stage: &mut Stage, _dt: f32) {
+        stage.draw(&FrameInput {
+            meshes: &[MeshDraw::new(0, glam::Mat4::IDENTITY)],
+            ..FrameInput::looking(glam::vec3(3.0, 2.0, 4.0), glam::Vec3::ZERO, stage.aspect())
+        });
+    }
+}
+
+fn main() -> app::Result<()> {
+    app::run(AppConfig::new("meinspiel", "Mein Spiel", "v0.1.0"), || Ok(MeinSpiel))
+}
+```
+
+Mehr: `examples/minimal.rs` (unter 60 Zeilen) und `examples/modern.rs` (Physik, Lampen, alle Schalter).
+
+## Zuschaltbare Teile
+
+Vorgabe ist klein; ein Spiel nimmt dazu, was es braucht: `mettgine = { path = "mettgine", features = ["gltf", "physics"] }`
+
+| Feature | bringt |
+|---|---|
+| `mett-net` (Vorgabe) | Mehrspieler über den Mett Launcher |
+| `images` | PNG und JPEG als Texturen |
+| `gltf` | Modelle im glTF-Format |
+| `audio-files` | WAV, OGG Vorbis |
+| `physics` | Physik (rapier3d) |
+| `ecs` | Entity-Component-System (hecs) |
+| `full` | alles |
+
+Die **moderne Grafik** (Materialien, HDR, Schattenstufen, viele Lampen, Raytracing, Pathtracing, Hochskalieren) braucht kein Feature: Sie entsteht, sobald `FrameInput::scene` gesetzt ist. Siehe [docs/moderne-grafik.md](docs/moderne-grafik.md).
 
 ## In einem Spiel benutzen
 
@@ -51,6 +100,8 @@ if let Some(c) = mettgine::crash_window::parse_args(&args) {
 }
 mettgine::crash::init("meinspiel", "MEIN SPIEL", VERSION);
 ```
+
+Mit `app::run` ist das schon erledigt. Version und Windows-Manifest setzt im `build.rs` des Spiels `include!("mettgine/game_build.rs");` mit `mettgine_game("MEINSPIEL_VERSION")`.
 
 Einstellungen, Spielstände, Protokoll und Absturzberichte liegen in `%APPDATA%\.mettlauncher\<spiel>` (`crash::data_dir`).
 
@@ -85,6 +136,7 @@ Ob der Szenen-Renderer auf der eigenen Grafikkarte richtig zeichnet, prüft ohne
 
 ```powershell
 cargo run --release --example gpu_check
+cargo run --release --example gpu_check_modern <ordner>
 cargo run --release --example gpu_check_world <ordner>   # Vergleichsbilder vor/nach einem Umbau
 ```
 
@@ -117,6 +169,6 @@ So bekommt jedes andere Spiel die Änderung beim nächsten `git submodule update
 
 ## Lizenzen
 
-Die Schrift-Atlanten und Modelle gehören den Spielen, nicht der Engine. Die Engine nutzt `font8x8` (MIT/Apache-2.0) für den Bitmap-Text und `png` (MIT/Apache-2.0) für das Startbild.
+Die Schrift-Atlanten und Modelle gehören den Spielen, nicht der Engine. Die Engine nutzt `font8x8` (MIT/Apache-2.0) für den Bitmap-Text und `png` (MIT/Apache-2.0) für das Startbild. Zuschaltbar: `gltf`, `image`, `hecs` (MIT/Apache-2.0), `rapier3d` (Apache-2.0); Klangdateien über `lewton` (MIT/Apache-2.0) und `hound` (Apache-2.0).
 
 Startbild (`assets/splash.png`): Schriftzug aus Archivo Black (OFL), Mettbrötchen selbst gezeichnet, Dino aus dem Logo des Mett Launchers (Herkunft und Lizenz des Fotos noch nicht belegt).

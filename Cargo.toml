@@ -1,6 +1,6 @@
 [package]
 name = "mettgine"
-version = "0.6.0"
+version = "0.7.0"
 edition = "2021"
 description = "Mettgine - Engine der Mett-Gaming-Spiele (Vulkan, Animation, Absturzberichte)"
 
@@ -40,11 +40,15 @@ mett-net = ["dep:mett-net"]
 images = ["dep:image"]
 gltf = ["dep:gltf", "images"]
 # Klangdateien (audio::mixer::decode)
-audio-files = ["rodio/wav", "rodio/vorbis", "rodio/symphonia-mp3"]
+audio-files = ["rodio/wav", "rodio/vorbis"]
 ecs = ["dep:hecs"]
 physics = ["dep:rapier3d"]
 # alles
 full = ["mett-net", "gltf", "images", "audio-files", "ecs", "physics"]
+
+[[example]]
+name = "modern"
+required-features = ["full"]
 
 [build-dependencies]
 naga = { version = "24", features = ["wgsl-in", "spv-out"] }
