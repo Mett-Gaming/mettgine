@@ -150,12 +150,15 @@ impl Post<'_> {
             let push = Push::a([
                 cfg.bounces.min(16) as f32,
                 cfg.samples.clamp(1, 64) as f32,
-                1.0,
+                // die Technik erwartet genau die Stelle aus dem Tiefen-Durchgang
+                if t.wants.guides { 0.0 } else { 1.0 },
                 0.0,
             ]);
             self.ray_pass(p.path, &[first, second], &push);
-            let still = cfg.accumulate && same_camera;
-            self.denoise(r, 0, still, true);
+            let still = cfg.accumulate && same_camera && !t.wants.guides;
+            if !t.wants.guides {
+                self.denoise(r, 0, still, true);
+            }
             // Farbe der ersten Flaeche: bei stehender Kamera ebenfalls mitteln (glatte Kanten)
             let color = if still {
                 self.accumulate(r, 1, true, 0.0).view
@@ -171,6 +174,9 @@ impl Post<'_> {
             return;
         }
         self.ray_pass(p.gi, &[first, second], &Push::a([0.0; 4]));
+        if t.wants.guides {
+            return;
+        }
         if f.ray_tracing.indirect {
             self.denoise(r, 0, false, true);
         }

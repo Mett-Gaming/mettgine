@@ -16,6 +16,8 @@ pub const NORMAL: vk::Format = vk::Format::R16G16B16A16_SFLOAT;
 pub const MOTION: vk::Format = vk::Format::R16G16_SFLOAT;
 /// r = Verdeckung, g = Sonnenschatten aus Strahlen
 pub const AO: vk::Format = vk::Format::R8G8_UNORM;
+/// Farbe ohne Licht, Anteil der Spiegelung
+pub const GUIDE: vk::Format = vk::Format::R8G8B8A8_UNORM;
 /// Stellen ohne verlaessliche Bewegung
 pub const REACTIVE: vk::Format = vk::Format::R8_UNORM;
 pub const EXPOSURE: vk::Format = vk::Format::R16_SFLOAT;
@@ -40,6 +42,8 @@ pub struct Wants {
     pub fxaa: bool,
     /// Technik eines Herstellers uebernimmt Glaettung und Hochskalieren
     pub vendor: bool,
+    /// Bilder, mit denen die Technik auch entrauscht
+    pub guides: bool,
     /// Strahlen: Streulicht, Spiegelung oder Pathtracing
     pub rays: bool,
 }
@@ -59,8 +63,9 @@ impl Wants {
     }
 
     /// `vendor` = die gewuenschte Technik steht bereit.
-    pub fn new(extent: vk::Extent2D, f: &Features, vendor: bool) -> Self {
+    pub fn new(extent: vk::Extent2D, f: &Features, vendor: bool, denoises: bool) -> Self {
         let k = f.render_scale.clamp(0.33, 1.0);
+        let rays = f.ray_tracing.indirect || f.ray_tracing.reflections || f.path_tracing.is_some();
         let scaled = |v: u32| ((v as f32 * k).round() as u32).max(8);
         Self {
             width: scaled(extent.width),
@@ -74,7 +79,8 @@ impl Wants {
             taa: !vendor && f.anti_alias == AntiAlias::Taa,
             fxaa: (!vendor && f.anti_alias == AntiAlias::Fxaa) || f.sharpen > 0.0,
             vendor,
-            rays: f.ray_tracing.indirect || f.ray_tracing.reflections || f.path_tracing.is_some(),
+            guides: vendor && denoises && f.ray_reconstruction && rays,
+            rays,
         }
     }
 }
@@ -96,6 +102,8 @@ pub struct Targets {
     /// Szene ohne Halbtransparentes und die Maske daraus
     pub opaque: Option<GpuImage>,
     pub reactive: Option<GpuImage>,
+    /// Farbe, Spiegelung, Normale mit Vorzeichen
+    pub guides: Option<[GpuImage; 3]>,
     pub bloom: Vec<(GpuImage, vk::Extent2D)>,
     pub ldr: Option<GpuImage>,
     pub rays: Option<RayTargets>,
@@ -137,6 +145,12 @@ impl Targets {
             )
         } else {
             (None, None)
+        };
+        let mut color = |format| arena.image(ctx, &TexDesc::target(w.width, w.height, format));
+        let guides = if w.guides {
+            Some([color(GUIDE)?, color(GUIDE)?, color(NORMAL)?])
+        } else {
+            None
         };
         let upscaled = if w.vendor {
             let mut desc = TexDesc::target(w.out_width, w.out_height, HDR);
@@ -210,6 +224,7 @@ impl Targets {
             upscaled,
             opaque,
             reactive,
+            guides,
             bloom,
             ldr,
             rays,
@@ -224,6 +239,7 @@ impl Targets {
         let single = self.sun.iter().chain(&self.lamps).chain(&self.ldr);
         let vendor = self.upscaled.iter().chain(&self.opaque);
         let single = single.chain(vendor.chain(&self.reactive));
+        let single = single.chain(self.guides.iter().flatten());
         let levels = self.bloom.iter().map(|b| &b.0);
         for i in self.rays.iter().flat_map(RayTargets::all) {
             arena.drop_image(d, i);

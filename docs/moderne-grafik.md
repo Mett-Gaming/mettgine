@@ -25,6 +25,7 @@ Modelle (`MeshDraw`), Figuren (`SkinDraw`), feste Modelle und Welt-Boxen werden 
 | `anti_alias` | FXAA oder TAA |
 | `render_scale`, `sharpen` | Szene kleiner rechnen und mit TAA hochskalieren; nachschärfen |
 | – (`SceneInput::decals`) | Aufkleber auf Flächen |
+| `upscaler`, `ray_reconstruction` | Techniken der Hersteller, siehe [hochskalieren.md](hochskalieren.md) |
 | `ray_tracing` | Schatten, Verdeckung, Streulicht, Spiegelungen aus Strahlen |
 | `path_tracing` | das ganze Bild aus Strahlen |
 
@@ -52,18 +53,9 @@ Entrauscht wird mit eigenen Durchgängen: über mehrere Bilder mitteln (`p_accum
 
 ## Techniken der Hersteller
 
-Noch nicht eingebaut. Erlaubt sind sie als wahlfreie Ausnahme (`AGENTS.md`, 7.): hinter eigenen Cargo-Features, zur Laufzeit geladen, nie im Archiv.
+FSR, XeSS, DLSS und Ray Reconstruction: siehe [hochskalieren.md](hochskalieren.md).
 
-| Technik | Was dafür nötig wäre | Was die Engine stattdessen hat |
-|---|---|---|
-| DLSS (Hochskalieren), Streamline | NVIDIA-Bibliotheken mit eigener Lizenz, Anmeldung der Anwendung, eigene Schicht um Instanz, Gerät und Swapchain | `render_scale` mit TAA |
-| DLSS Frame Generation | Streamline samt Reflex; ersetzt das Anzeigen der Bilder | – |
-| DLSS Ray Reconstruction | wie DLSS, zusätzlich Albedo, Spiegelanteil, Rauheit und Trefferabstand als Bilder | eigenes Entrauschen |
-| FSR (Hochskalieren, Bilderzeugung) | FidelityFX-DLLs (seit 2.4 auch für Vulkan); die Bilderzeugung ersetzt die Swapchain | `render_scale` mit TAA, `sharpen` |
-| FSR Ray Regeneration | nur bestimmte AMD-Karten und Treiber | eigenes Entrauschen |
-| XeSS | Bibliothek von Intel mit eigener Lizenz | `render_scale` mit TAA |
-
-**Falls es doch dazukommen soll:** Tiefe, Bewegung, Normale mit Rauheit, Kameraversatz und Belichtung liegen schon als Bilder bzw. Werte vor (`render/modern/targets.rs`, `gpu::jitter`). Anzusetzen wäre an der Stelle von `Post::taa` in `render/modern/post.rs`, als eigenes Cargo-Feature. Vorher Lizenz und Weitergabe klären.
+Nicht eingebaut, weil es sie (Stand November 2026) nur für DirectX 12 gibt: FSR Ray Regeneration, XeSS Frame Generation, XeLL.
 
 ## Prüfen
 

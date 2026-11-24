@@ -19,6 +19,8 @@ const DEPTH_STAGES: vk::PipelineStageFlags = vk::PipelineStageFlags::from_raw(
 enum Stage {
     Shadow,
     Pre,
+    /// wie `Pre`, mit Bildern fuers Entrauschen
+    Guides,
     Opaque,
     Blend,
 }
@@ -175,6 +177,7 @@ impl Modern {
                 Stage::Shadow if b.masked => k.shadow_masked,
                 Stage::Shadow => k.shadow,
                 Stage::Pre => k.pre,
+                Stage::Guides => k.guides.unwrap_or(k.pre),
                 Stage::Opaque => k.opaque,
                 Stage::Blend => k.blend,
             };
@@ -324,11 +327,13 @@ impl Modern {
         let (d, cmd) = (&i.ctx.device, i.cmd);
         let frag = vk::PipelineStageFlags::FRAGMENT_SHADER;
         let out = vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT;
-        let images = [
+        let guides = t.guides.iter().flatten();
+        let mut images = vec![
             depth_target(t.depth.image),
             color_target(t.normal.image),
             color_target(t.motion.image),
         ];
+        images.extend(guides.clone().map(|g| color_target(g.image)));
         barrier(
             d,
             cmd,
@@ -336,10 +341,11 @@ impl Modern {
             &images,
         );
         let clear = vk::AttachmentLoadOp::CLEAR;
-        let colors = [
+        let mut colors = vec![
             color_att(t.normal.view, clear),
             color_att(t.motion.view, clear),
         ];
+        colors.extend(guides.clone().map(|g| color_att(g.view, clear)));
         let layout = vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL;
         let depth = depth_att(t.depth.view, layout, clear);
         d.cmd_begin_rendering(
@@ -352,15 +358,21 @@ impl Modern {
         );
         set_viewport(d, cmd, i.extent);
         self.bind_frame(i, 0);
-        self.draw(i, Stage::Pre, self.batches(&self.views.camera));
+        let stage = if t.wants.guides {
+            Stage::Guides
+        } else {
+            Stage::Pre
+        };
+        self.draw(i, stage, self.batches(&self.views.camera));
         // nur wer den Verlauf nutzt, braucht die Bewegung des Himmels
         if t.wants.temporal() {
-            d.cmd_bind_pipeline(cmd, GFX, self.pipes.sky_move);
+            let sky = self.pipes.sky_guides.filter(|_| t.wants.guides);
+            d.cmd_bind_pipeline(cmd, GFX, sky.unwrap_or(self.pipes.sky_move));
             self.bind_any_material(i);
             d.cmd_draw(cmd, 3, 1, 0, 0);
         }
         d.cmd_end_rendering(cmd);
-        let images = [
+        let mut images = vec![
             depth_read(
                 t.depth.image,
                 vk::ImageLayout::DEPTH_STENCIL_READ_ONLY_OPTIMAL,
@@ -368,6 +380,7 @@ impl Modern {
             color_read(t.normal.image),
             color_read(t.motion.image),
         ];
+        images.extend(guides.map(|g| color_read(g.image)));
         barrier(d, cmd, (DEPTH_STAGES | out, frag | DEPTH_STAGES), &images);
     }
 

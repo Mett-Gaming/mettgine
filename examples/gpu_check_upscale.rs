@@ -84,6 +84,8 @@ struct Case {
     scale: f32,
     aa: AntiAlias,
     moving: bool,
+    paths: Option<PathTracing>,
+    rr: bool,
 }
 
 fn shot(r: &mut Renderer, w: &World, c: &Case, n: u32, path: Option<&Path>) -> Result<()> {
@@ -109,6 +111,8 @@ fn shot(r: &mut Renderer, w: &World, c: &Case, n: u32, path: Option<&Path>) -> R
             anti_alias: c.aa,
             render_scale: c.scale,
             upscaler: c.upscaler,
+            path_tracing: c.paths,
+            ray_reconstruction: c.rr,
             sun_shadow_size: 2048,
             ..Features::default()
         },
@@ -155,6 +159,8 @@ fn check(window: &Window, dir: &Path) -> Result<()> {
         scale: 1.0,
         aa: AntiAlias::Taa,
         moving: false,
+        paths: None,
+        rr: false,
     };
     while r.splash_active() {
         shot(&mut r, &world, &case, 0, None)?;
@@ -190,6 +196,42 @@ fn check(window: &Window, dir: &Path) -> Result<()> {
                 }
             }
         }
+    }
+    if r.ray_tracing() && found.iter().any(|f| f.0 == Upscaler::Dlss) {
+        check_denoising(&mut r, &run)?;
+    }
+    Ok(())
+}
+
+/// Pathtracing: eigenes Entrauschen gegen Ray Reconstruction, Vergleich mit langem Mitteln.
+fn check_denoising(
+    r: &mut Renderer,
+    run: &dyn Fn(&mut Renderer, &str, &Case) -> Result<Vec<u8>>,
+) -> Result<()> {
+    let mut case = Case {
+        upscaler: Upscaler::Own,
+        scale: 1.0,
+        aa: AntiAlias::None,
+        moving: false,
+        paths: Some(PathTracing {
+            samples: 32,
+            accumulate: true,
+            ..Default::default()
+        }),
+        rr: false,
+    };
+    let best = run(r, "pfade_lang", &case)?;
+    case.paths = Some(PathTracing::default());
+    for (scale, moving) in [(1.0, false), (1.0, true), (0.5, false), (0.5, true)] {
+        (case.scale, case.moving) = (scale, moving);
+        let tag = format!("pfade_{scale}_{moving}");
+        (case.upscaler, case.aa, case.rr) = (Upscaler::Own, AntiAlias::Taa, false);
+        let own = difference(&best, &run(r, &format!("{tag}_eigen"), &case)?);
+        case.upscaler = Upscaler::Dlss;
+        let dlss = difference(&best, &run(r, &format!("{tag}_dlss"), &case)?);
+        case.rr = true;
+        let rr = difference(&best, &run(r, &format!("{tag}_rr"), &case)?);
+        println!("{tag}: eigen {own:.3}, DLSS {dlss:.3}, Ray Reconstruction {rr:.3}");
     }
     Ok(())
 }

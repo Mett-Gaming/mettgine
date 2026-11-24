@@ -23,6 +23,8 @@ pub struct Context {
     pub queue: vk::Queue,
     pub swapchain_loader: ash::khr::swapchain::Device,
     pub rt: Option<RtFns>,
+    /// Techniken der Hersteller sind gewuenscht und da
+    pub vendor: bool,
     /// Helligkeit laesst sich dem Bildschirm mitteilen
     pub hdr_metadata: bool,
     pub low_latency: super::latency::Support,
@@ -158,6 +160,7 @@ impl Context {
 
             Ok(Self {
                 _entry: entry,
+                vendor: vendors.any(),
                 instance,
                 debug,
                 surface_loader,

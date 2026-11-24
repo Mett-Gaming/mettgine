@@ -2,10 +2,10 @@
 
 use super::super::context::Context;
 use super::super::util::image_barrier;
-use super::super::vendor::{Backend, Job, Picture, Upscaler, Vendors};
+use super::super::vendor::{Backend, Guides, Job, Picture, Upscaler, Vendors};
 use super::memory::GpuImage;
 use super::scene::barrier;
-use super::targets::{HDR, MOTION, REACTIVE};
+use super::targets::{GUIDE, HDR, MOTION, NORMAL, REACTIVE};
 use super::{Inputs, Modern, SceneInput};
 use ash::vk;
 use glam::Vec2;
@@ -45,6 +45,11 @@ impl Upscale {
     /// Steht die Technik bereit? (Legt sie beim ersten Mal an.)
     pub fn ready(&mut self, ctx: &Context, which: Upscaler) -> bool {
         self.get(ctx, which).is_some()
+    }
+
+    /// Kann die Technik auch entrauschen?
+    pub fn denoises(&mut self, ctx: &Context, which: Upscaler) -> bool {
+        self.get(ctx, which).is_some_and(|b| b.denoises())
     }
 
     pub fn available(&mut self, ctx: &Context) -> Vec<(Upscaler, String)> {
@@ -120,6 +125,9 @@ impl Modern {
         if let Some(r) = &t.reactive {
             images.push(change(r.image, color, (READ, READ), (none, read)));
         }
+        for g in t.guides.iter().flatten() {
+            images.push(change(g.image, color, (READ, READ), (none, read)));
+        }
         let before_stages = FRAGMENT
             | vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT
             | vk::PipelineStageFlags::LATE_FRAGMENT_TESTS;
@@ -132,7 +140,11 @@ impl Modern {
             motion: picture(&t.motion, MOTION, i.extent),
             reactive: t.reactive.as_ref().map(|r| picture(r, REACTIVE, i.extent)),
             output: picture(out, HDR, i.out),
-            guides: None,
+            guides: t.guides.as_ref().map(|[albedo, specular, normal]| Guides {
+                albedo: picture(albedo, GUIDE, i.extent),
+                specular: picture(specular, GUIDE, i.extent),
+                normal: picture(normal, NORMAL, i.extent),
+            }),
             // so viele Bildpunkte wandert die Szene nach rechts und unten
             jitter: Vec2::new(jitter.x, -jitter.y),
             dt: s.dt,

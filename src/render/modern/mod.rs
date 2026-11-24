@@ -209,6 +209,7 @@ impl Modern {
             sets.post_layout,
             rt.as_ref().map(|r| r.layout),
             (screen, ldr),
+            ctx.vendor,
         )?;
         let fixed = Fixed::new(ctx, pool, &mut store.arena)?;
         Ok(Self {
@@ -455,7 +456,8 @@ impl Modern {
         }
         let s = &limited;
         let vendor = upscale.ready(i.ctx, s.features.upscaler);
-        let wants = Wants::new(i.out, &s.features, vendor);
+        let denoises = vendor && upscale.denoises(i.ctx, s.features.upscaler);
+        let wants = Wants::new(i.out, &s.features, vendor, denoises);
         i.extent = wants.scene();
         let i = &*i;
         let same_camera = self.prev_view_proj == Some(s.camera.view_proj());

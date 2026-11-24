@@ -22,8 +22,27 @@ struct PreOut {
     @location(1) motion: vec2<f32>,
 };
 
+struct GuideOut {
+    @location(0) normal: vec4<f32>,
+    @location(1) motion: vec2<f32>,
+    @location(2) albedo: vec4<f32>,
+    @location(3) specular: vec4<f32>,
+    @location(4) surface: vec4<f32>,
+};
+
 @fragment
-fn fs_main(in: SkyOut) -> PreOut {
+fn fs_guides(in: SkyOut) -> GuideOut {
+    let p = sky_pre(in);
+    var out: GuideOut;
+    out.normal = p.normal;
+    out.motion = p.motion;
+    out.albedo = vec4<f32>(0.0);
+    out.specular = vec4<f32>(0.0);
+    out.surface = vec4<f32>(0.0, 1.0, 0.0, 1.0);
+    return out;
+}
+
+fn sky_pre(in: SkyOut) -> PreOut {
     let far = s.inv_view_proj * vec4<f32>(in.ndc, 1.0, 1.0);
     let p = vec4<f32>(far.xyz / far.w, 1.0);
     let now = s.plain_view_proj * p;
@@ -32,4 +51,9 @@ fn fs_main(in: SkyOut) -> PreOut {
     out.normal = vec4<f32>(0.0);
     out.motion = (now.xy / now.w - before.xy / before.w) * vec2<f32>(0.5, -0.5);
     return out;
+}
+
+@fragment
+fn fs_main(in: SkyOut) -> PreOut {
+    return sky_pre(in);
 }

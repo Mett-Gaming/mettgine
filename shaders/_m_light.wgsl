@@ -131,6 +131,39 @@ fn lamps_at(f: Surface, p: vec3<f32>, frag: vec2<f32>) -> vec3<f32> {
     return sum;
 }
 
+struct GuideOut {
+    @location(0) normal: vec4<f32>,
+    @location(1) motion: vec2<f32>,
+    @location(2) albedo: vec4<f32>,
+    @location(3) specular: vec4<f32>,
+    @location(4) surface: vec4<f32>, // Normale mit Vorzeichen, Rauheit
+};
+
+// Wie `fs_pre`, dazu die Bilder fuers Entrauschen durch die Technik eines Herstellers
+@fragment
+fn fs_guides(in: VsOut, @builtin(front_facing) front: bool) -> GuideOut {
+    let m = mats[in.material];
+    let base = textureSampleBias(base_tex, mat_samp, in.uv, s.cam_dir.w) * m.base * in.color;
+    let n = surface_normal(in, m, front);
+    let mr = textureSampleBias(metal_rough_tex, mat_samp, in.uv, s.cam_dir.w);
+    if (base.a < m.params.z) {
+        discard;
+    }
+    let rough = clamp(m.params.y * mr.g, 0.0, 1.0);
+    let metal = clamp(m.params.x * mr.b, 0.0, 1.0);
+    var out: GuideOut;
+    out.normal = vec4<f32>(n * 0.5 + vec3<f32>(0.5), rough);
+    let now = in.now.xy / in.now.w;
+    let before = in.before.xy / in.before.w;
+    out.motion = (now - before) * vec2<f32>(0.5, -0.5);
+    out.albedo = vec4<f32>(base.rgb * (1.0 - metal), 1.0);
+    let ndv = max(dot(n, normalize(s.cam_pos.xyz - in.world)), 0.0001);
+    let f0 = mix(vec3<f32>(0.04), base.rgb, metal);
+    out.specular = vec4<f32>(env_brdf(f0, max(rough, 0.045), ndv), 1.0);
+    out.surface = vec4<f32>(n, rough);
+    return out;
+}
+
 // Fertige Farbe einer Flaeche (linear, ohne Obergrenze)
 fn lit(in: VsOut, front: bool) -> vec4<f32> {
     let m = mats[in.material];

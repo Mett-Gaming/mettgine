@@ -9,11 +9,13 @@ use super::super::pipelines::{
 use super::super::Result;
 use super::model::{Joints, Vertex};
 use super::prepare::{Kind, KINDS};
-use super::targets::{AO, EXPOSURE, HDR, MOTION, NORMAL, REACTIVE};
+use super::targets::{AO, EXPOSURE, GUIDE, HDR, MOTION, NORMAL, REACTIVE};
 use crate::gpu::{MeshVertex, SkinVertex};
 use crate::particles::ParticleInst;
 use ash::vk;
 
+/// Farbziele des Tiefen-Durchgangs hinter der Normalen, mit Bildern fuers Entrauschen
+const GUIDE_COLORS: [vk::Format; 4] = [MOTION, GUIDE, GUIDE, NORMAL];
 /// Werte der Nachbearbeitung (siehe `_p_common.wgsl`)
 pub const POST_PUSH: u32 = 128;
 /// Sicht der Lampe beim Schattenzeichnen
@@ -25,6 +27,7 @@ struct Shaders {
     vs_shadow: &'static [u8],
     fs: &'static [u8],
     fs_pre: &'static [u8],
+    fs_guides: &'static [u8],
     fs_shadow: &'static [u8],
 }
 
@@ -35,6 +38,7 @@ macro_rules! shaders {
             vs_shadow: include_bytes!(concat!(env!("OUT_DIR"), "/", $name, ".vs_shadow.spv")),
             fs: include_bytes!(concat!(env!("OUT_DIR"), "/", $name, ".frag.spv")),
             fs_pre: include_bytes!(concat!(env!("OUT_DIR"), "/", $name, ".fs_pre.spv")),
+            fs_guides: include_bytes!(concat!(env!("OUT_DIR"), "/", $name, ".fs_guides.spv")),
             fs_shadow: include_bytes!(concat!(env!("OUT_DIR"), "/", $name, ".fs_shadow.spv")),
         }
     };
@@ -102,6 +106,8 @@ pub struct KindPipes {
     /// mit Loechern (prueft die Textur)
     pub shadow_masked: vk::Pipeline,
     pub pre: vk::Pipeline,
+    /// … mit Bildern fuers Entrauschen (nur wenn Techniken der Hersteller gewuenscht sind)
+    pub guides: Option<vk::Pipeline>,
     pub opaque: vk::Pipeline,
     pub blend: vk::Pipeline,
 }
@@ -132,6 +138,7 @@ pub struct Pipes {
     pub sky: vk::Pipeline,
     /// Bewegung des Himmels im Tiefen-Durchgang
     pub sky_move: vk::Pipeline,
+    pub sky_guides: Option<vk::Pipeline>,
     pub particle: vk::Pipeline,
     pub decal: vk::Pipeline,
     pub post: PostPipes,
@@ -188,7 +195,12 @@ unsafe fn pipeline_layout(
     )?)
 }
 
-unsafe fn kind_pipes(d: &Gpu, layout: vk::PipelineLayout, kind: Kind) -> Result<KindPipes> {
+unsafe fn kind_pipes(
+    d: &Gpu,
+    layout: vk::PipelineLayout,
+    kind: Kind,
+    guides: bool,
+) -> Result<KindPipes> {
     let s = shaders(kind);
     let (bindings, attrs) = vertex_layout(kind);
     let base = || PipelineDesc {
@@ -224,6 +236,21 @@ unsafe fn kind_pipes(d: &Gpu, layout: vk::PipelineLayout, kind: Kind) -> Result<
                 ..base()
             },
         )?,
+        guides: if guides {
+            Some(create_pipeline(
+                d,
+                layout,
+                &PipelineDesc {
+                    fs: s.fs_guides,
+                    fs_entry: c"fs_guides",
+                    color_format: Some(NORMAL),
+                    more_colors: &GUIDE_COLORS,
+                    ..base()
+                },
+            )?)
+        } else {
+            None
+        },
         opaque: create_pipeline(
             d,
             layout,
@@ -274,13 +301,14 @@ impl Pipes {
         post: vk::DescriptorSetLayout,
         rays: Option<vk::DescriptorSetLayout>,
         (screen, ldr): (vk::Format, vk::Format),
+        guides: bool,
     ) -> Result<Self> {
         let d = &ctx.gpu();
         // SAFETY: gueltiges Geraet; freigegeben in `destroy`.
         unsafe {
             let layout = pipeline_layout(d, &[frame, material], SCENE_PUSH)?;
             let post_layout = pipeline_layout(d, &[post], POST_PUSH)?;
-            let k = |kind| kind_pipes(d, layout, kind);
+            let k = |kind| kind_pipes(d, layout, kind, guides);
             let particle_bind = [vk::VertexInputBindingDescription {
                 binding: 0,
                 stride: size_of::<ParticleInst>() as u32,
@@ -334,6 +362,19 @@ impl Pipes {
                 post_layout,
                 kinds: [k(KINDS[0])?, k(KINDS[1])?, k(KINDS[2])?, k(KINDS[3])?],
                 sky: create_pipeline(d, layout, &sky)?,
+                sky_guides: if guides {
+                    let desc = PipelineDesc {
+                        fs: spv!("m_skymove.fs_guides"),
+                        fs_entry: c"fs_guides",
+                        color_format: Some(NORMAL),
+                        more_colors: &GUIDE_COLORS,
+                        depth_write: false,
+                        ..scene_desc(spv!("m_skymove.vert"), &[], &[], &[])
+                    };
+                    Some(create_pipeline(d, layout, &desc)?)
+                } else {
+                    None
+                },
                 sky_move: create_pipeline(d, layout, &sky_move)?,
                 particle: create_pipeline(d, layout, &particle)?,
                 decal: create_pipeline(d, layout, &decal)?,
@@ -362,7 +403,8 @@ impl Pipes {
     /// Die GPU ist untaetig.
     pub unsafe fn destroy(&self, d: &ash::Device) {
         for k in &self.kinds {
-            for p in [k.shadow, k.shadow_masked, k.pre, k.opaque, k.blend] {
+            let all = [k.shadow, k.shadow_masked, k.pre, k.opaque, k.blend];
+            for p in all.into_iter().chain(k.guides) {
                 d.destroy_pipeline(p, None);
             }
         }
@@ -389,6 +431,9 @@ impl Pipes {
             d.destroy_pipeline(p, None);
         }
         d.destroy_pipeline(self.image, None);
+        if let Some(p) = self.sky_guides {
+            d.destroy_pipeline(p, None);
+        }
         if let Some(r) = &self.rays {
             for p in [r.vis, r.gi, r.path] {
                 d.destroy_pipeline(p, None);
